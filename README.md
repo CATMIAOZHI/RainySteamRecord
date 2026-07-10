@@ -6,7 +6,7 @@
 [![Version](https://img.shields.io/github/v/release/CATMIAOZHI/RainySteamRecord?color=ff85a2)](https://github.com/CATMIAOZHI/RainySteamRecord/releases/latest)
 [![License](https://img.shields.io/badge/License-GPL--3.0-blue?color=ff85a2)](LICENSE)
 
-一个现代化的 Windows 桌面工具，用于浏览和导出 Steam 游戏录像（DASH `.m4s` → `.mp4`）。樱花色系 UI，双击即时预览，FFmpeg 无损转换，内置 14 套主题。
+一个现代化的 Windows 桌面工具，用于浏览、管理和导出 Steam 游戏录像（DASH `.m4s` → `.mp4`）。樱花色系 UI，双击即时预览，FFmpeg 无损转换，内置 14 套主题。
 
 雨晴录像 RainySteamRecord — the Rainy Family tools.
 
@@ -16,8 +16,10 @@
 
 | 功能 | 说明 |
 |------|------|
-| 🎬 **即时预览** | 双击片段卡片直接播放，基于 MSE 流式喂入 fMP4 分段，首帧 ~100ms，支持进度条拖拽跳转，无需等待转换 |
-| 🖼️ **缩略图网格** | 自动提取首帧缩略图，自适应卡片网格，分页浏览，流畅动画 |
+| 🎬 **即时预览** | 双击片段卡片直接播放，优先使用 MSE 流式播放；HEVC 等不兼容格式自动使用内置 mpv 原生播放，无需等待完整合并 |
+| 🖼️ **缩略图网格** | 自动提取首帧缩略图，自适应卡片网格，分批无限滚动浏览 |
+| 🔎 **组合筛选** | 按 Steam ID、游戏、录像类型和起止日期筛选，并可一键选择当前全部筛选结果 |
+| 🗂️ **片段管理** | 右键预览、原生播放、单片导出、重建缩略图、修改游戏名、打开目录、复制路径或移入回收站 |
 | 🎮 **自动识别游戏名** | 自动识别每个片段对应的游戏，包括非 Steam 游戏（模拟器、Epic 等），通过 Steam API + CRC32 appid |
 | 📦 **批量导出** | 选中多个片段一键导出为 `.mp4`，FFmpeg `-c copy` 无损转换，自动重命名（游戏名_日期时间.mp4） |
 | 🎨 **14 套内置主题** | 雨晴（默认）、Steam Dark、赛博朋克、霓虹蓝、Dracula、Nord、Gruvbox、Catppuccin 等 |
@@ -36,7 +38,7 @@
 | 📌 **NSIS 安装包** (.exe) | 推荐安装方式 |
 | 📦 **MSI 安装包** (.msi) | 企业部署备用 |
 
-> 内置 FFmpeg，无需单独安装，开箱即用~
+> 内置 FFmpeg 和 mpv，无需单独安装，开箱即用~
 
 ---
 
@@ -51,14 +53,10 @@
 │                        ▼                          │
 │             Tauri 2 IPC 通道                       │
 │                        │                          │
-│     ┌──────────┬───────┴──┬──────────┐            │
-│     ▼          ▼          ▼          ▼            │
-│  config.rs  steam.rs   ffmpeg.rs  streaming.rs    │
-│  配置管理   Steam发现   转换导出    MSE流式预览     │
-│     │          │          │          │            │
-│     ▼          ▼          ▼          ▼            │
-│  JSON配置   VDF解析    FFmpeg子进程  fMP4分段读取   │
-│  GameIDs    CRC32      concat+mux   tauri::Response│
+│   ┌─────────┬──────┴─────┬──────────┬─────────┐    │
+│   ▼         ▼            ▼          ▼         ▼    │
+│ config.rs steam.rs   ffmpeg.rs streaming.rs mpv.rs │
+│ 配置管理  Steam发现   转换导出   MSE流式预览  原生播放│
 └──────────────────────────────────────────────────┘
 ```
 
@@ -68,7 +66,7 @@
 |------|------|
 | 桌面框架 | Tauri 2 (Rust) |
 | 后端 | 纯 Rust（无 Node sidecar） |
-| FFmpeg | 内置二进制（CI 下载，打包为 Tauri resources） |
+| 媒体工具 | 内置 FFmpeg 与 mpv（打包为 Tauri resources） |
 | 前端 | React 19 + TypeScript + Vite |
 | 样式 | Tailwind CSS + CSS 变量主题 |
 | 状态管理 | Zustand |
@@ -79,9 +77,10 @@
 | 路径 | 方式 | 首帧延迟 |
 |------|------|----------|
 | **MSE 流式**（主） | 读取 m4s 分段 → MediaSource SourceBuffer → `<video>` 渐进式播放，支持随机跳转 | ~100ms |
-| **FFmpeg 转换**（后备） | 拼接 m4s → 临时 mp4 → `convertFileSrc` 播放 | 数秒 |
+| **mpv 原生播放**（后备） | 内置 mpv 直接读取 `session.mpd`，适用于 HEVC 等浏览器不支持的编码 | 无需预合并 |
+| **FFmpeg 转换**（最终后备） | mpv 无法启动时拼接 m4s → 临时 mp4 → `convertFileSrc` 播放 | 数秒至更久 |
 
-MSE 不支持时（如 HEVC 编解码器在某些系统）自动回退到 FFmpeg 后备方案。
+主程序使用 Windows Job Object 托管 FFmpeg 和 mpv；主程序退出时不会遗留媒体子进程。
 
 ---
 
@@ -91,19 +90,21 @@ MSE 不支持时（如 HEVC 编解码器在某些系统）自动回退到 FFmpeg
 RainySteamRecord/
 ├── src-tauri/
 │   └── src/
-│       ├── lib.rs          # Tauri 命令注册 (22 commands)
+│       ├── lib.rs          # Tauri 命令注册
 │       ├── config.rs       # 配置 + GameIDs 管理
 │       ├── steam.rs        # Steam 发现, VDF 解析, 非 Steam 游戏
 │       ├── ffmpeg.rs       # m4s concat → mp4, 缩略图提取, 预览后备
+│       ├── mpv.rs          # 内置 mpv 原生播放
+│       ├── process_job.rs  # Windows Job Object 子进程托管
 │       ├── streaming.rs     # MSE 流式预览 (session.mpd 解析, 分段读取)
 │       ├── clip.rs          # 片段扫描, 时长解析, 缩略图生成, 文件缓存
 │       └── update.rs       # GitHub Release 更新检测
 ├── src/
 │   ├── components/
-│   │   ├── VideoPreviewDialog.tsx  # MSE 播放器 + FFmpeg 后备
-│   │   ├── ClipCard.tsx            # 缩略图卡片 (单击选中/双击预览)
-│   │   ├── ClipGrid.tsx            # 自适应网格 + 分页
-│   │   ├── FilterBar.tsx           # SteamID/游戏/类型筛选
+│   │   ├── VideoPreviewDialog.tsx  # MSE 播放器 + mpv/FFmpeg 后备
+│   │   ├── ClipCard.tsx            # 缩略图卡片与右键管理菜单
+│   │   ├── ClipGrid.tsx            # 自适应网格 + 无限滚动
+│   │   ├── FilterBar.tsx           # Steam ID/游戏/类型/日期筛选
 │   │   ├── BottomBar.tsx           # 导出/进度条
 │   │   ├── SettingsDialog.tsx      # 主题/语言/路径设置
 │   │   ├── TitleBar.tsx            # 无边框窗口控制
@@ -151,9 +152,9 @@ npm run tauri:dev
 | `npm run lint` | 运行 ESLint |
 | `npm run typecheck` | TypeScript 类型检查 |
 
-### FFmpeg 二进制
+### 媒体二进制
 
-FFmpeg 不提交到 git（138MB）。开发时手动放置到 `src-tauri/binaries/ffmpeg.exe`，CI 自动下载。路径解析顺序：exe 目录 → `CARGO_MANIFEST_DIR/binaries` → `%LOCALAPPDATA%\RainySteamRecord` → 系统 PATH。
+FFmpeg 和 mpv 二进制不提交到 git。开发时将 `ffmpeg.exe`、`mpv.exe` 和 `d3dcompiler_43.dll` 放到 `src-tauri/binaries/`，CI 会自动下载并随安装包分发。FFmpeg 路径解析顺序：exe 目录 → `CARGO_MANIFEST_DIR/binaries` → `%LOCALAPPDATA%\RainySteamRecord` → 系统 PATH。
 
 ---
 

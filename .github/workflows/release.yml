@@ -30,6 +30,20 @@ jobs:
           Copy-Item $exe.FullName "src-tauri/binaries/ffmpeg.exe" -Force
           Write-Host "ffmpeg.exe downloaded: $((Get-Item src-tauri/binaries/ffmpeg.exe).Length) bytes"
 
+      - name: Download mpv
+        shell: pwsh
+        run: |
+          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest"
+          $asset = $release.assets | Where-Object { $_.name -match '^mpv-x86_64-[^-]+-git-[^.]+\.7z$' } | Select-Object -First 1
+          if (-not $asset) { throw "Compatible mpv release asset not found" }
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile mpv.7z -UseBasicParsing
+          7z x mpv.7z -ompv_extract -y
+          $mpv = Get-ChildItem mpv_extract -Recurse -Filter "mpv.exe" | Select-Object -First 1
+          $d3d = Get-ChildItem mpv_extract -Recurse -Filter "d3dcompiler_43.dll" | Select-Object -First 1
+          if (-not $mpv -or -not $d3d) { throw "Required mpv files not found in archive" }
+          Copy-Item $mpv.FullName "src-tauri/binaries/mpv.exe" -Force
+          Copy-Item $d3d.FullName "src-tauri/binaries/d3dcompiler_43.dll" -Force
+
       - name: Install frontend dependencies
         run: npm ci --legacy-peer-deps
 

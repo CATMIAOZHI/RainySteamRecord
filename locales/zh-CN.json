@@ -6,7 +6,9 @@
   },
   "common": {
     "convert": "转换片段",
-    "exportAll": "全部导出",
+    "selectFiltered": "全选当前筛选（{{count}}）",
+    "deselectFiltered": "取消当前筛选全选",
+    "selectFilteredHint": "选择或取消选择当前筛选结果中的全部片段",
     "clearSelection": "清除选择",
     "settings": "设置",
     "exit": "退出",
@@ -18,7 +20,8 @@
     "apply": "应用更改",
     "delete": "删除",
     "save": "保存",
-    "allGames": "所有游戏"
+    "allGames": "所有游戏",
+    "openFileLocation": "打开所在目录"
   },
   "filter": {
     "steamId": "Steam ID",
@@ -26,7 +29,10 @@
     "mediaType": "媒体类型",
     "allClips": "所有片段",
     "manualClips": "手动录制",
-    "backgroundClips": "后台录制"
+    "backgroundClips": "后台录制",
+    "dateFrom": "从",
+    "dateTo": "至",
+    "clearDate": "清除时间"
   },
   "conversion": {
     "processing": "处理片段 {{current}}/{{total}} - {{percent}}%",
@@ -68,7 +74,19 @@
     "doubleClickHint": "双击预览",
     "fallback": "兼容模式"
   },
+  "contextMenu": {
+    "preview": "预览",
+    "nativePreview": "使用原生播放器",
+    "export": "导出此片段",
+    "regenerateThumbnail": "重新生成缩略图",
+    "renameGame": "修改游戏名称",
+    "refresh": "刷新片段信息",
+    "copyPath": "复制路径",
+    "delete": "移入回收站",
+    "deleteConfirm": "确定要将片段“{{name}}”移入回收站吗？"
+  },
   "messages": {
+    "clipCount": "已显示 {{shown}} / 共 {{total}} 个",
     "noClips": "片段文件夹为空。请至少录制一个片段后再使用。",
     "noSteamFound": "无法找到 Steam userdata 目录。正在退出。",
     "deleteInvalidConfirm": "发现 {{count}} 个无效片段。是否删除？",

@@ -1,30 +1,24 @@
 import { useTranslation } from "react-i18next";
-import { useStore, CLIPS_PER_PAGE } from "../stores/app";
+import { useStore, filterClips } from "../stores/app";
 
 export default function BottomBar() {
   const { t } = useTranslation();
-  const {
-    clips,
-    selectedGameId,
-    clipIndex,
-    selectedClips,
-    isConverting,
-    progress,
-    convertClips,
-    exportAll,
-    clearSelection,
-    prevPage,
-    nextPage,
-  } = useStore();
+  const clips = useStore((state) => state.clips);
+  const selectedGameId = useStore((state) => state.selectedGameId);
+  const selectedDateFrom = useStore((state) => state.selectedDateFrom);
+  const selectedDateTo = useStore((state) => state.selectedDateTo);
+  const selectedClips = useStore((state) => state.selectedClips);
+  const isConverting = useStore((state) => state.isConverting);
+  const progress = useStore((state) => state.progress);
+  const convertClips = useStore((state) => state.convertClips);
+  const toggleFilteredSelection = useStore((state) => state.toggleFilteredSelection);
+  const clearSelection = useStore((state) => state.clearSelection);
 
-  const filtered = selectedGameId
-    ? clips.filter((c) => c.game_id === selectedGameId)
-    : clips;
+  const filtered = filterClips(clips, selectedGameId, selectedDateFrom, selectedDateTo);
 
   const hasSelection = selectedClips.size > 0;
   const hasClips = filtered.length > 0;
-  const canPrev = clipIndex > 0;
-  const canNext = clipIndex + CLIPS_PER_PAGE < filtered.length;
+  const allFilteredSelected = hasClips && filtered.every((clip) => selectedClips.has(clip.folder));
 
   return (
     <div className="border-t border-border px-5 py-3">
@@ -43,24 +37,7 @@ export default function BottomBar() {
         </div>
       )}
 
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex gap-2">
-          <button
-            onClick={prevPage}
-            disabled={!canPrev || isConverting}
-            className="rounded-lg border border-border bg-surface px-4 py-2 text-sm text-text transition-colors hover:bg-surface-hover disabled:opacity-40"
-          >
-            {t("common.previous")}
-          </button>
-          <button
-            onClick={nextPage}
-            disabled={!canNext || isConverting}
-            className="rounded-lg border border-border bg-surface px-4 py-2 text-sm text-text transition-colors hover:bg-surface-hover disabled:opacity-40"
-          >
-            {t("common.next")}
-          </button>
-        </div>
-
+      <div className="flex items-center justify-end gap-3">
         <div className="flex gap-2">
           <button
             onClick={clearSelection}
@@ -70,11 +47,12 @@ export default function BottomBar() {
             {t("common.clearSelection")}
           </button>
           <button
-            onClick={() => exportAll()}
+            onClick={toggleFilteredSelection}
             disabled={!hasClips || isConverting}
+            title={t("common.selectFilteredHint")}
             className="rounded-lg border border-border bg-surface px-4 py-2 text-sm text-text transition-colors hover:bg-surface-hover disabled:opacity-40"
           >
-            {t("common.exportAll")}
+            {t(allFilteredSelected ? "common.deselectFiltered" : "common.selectFiltered", { count: filtered.length })}
           </button>
           <button
             onClick={() => convertClips([...selectedClips])}

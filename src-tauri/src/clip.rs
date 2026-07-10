@@ -27,6 +27,43 @@ pub struct ClipInfo {
     pub media_type: String,
 }
 
+pub(crate) fn folder_datetime(folder_name: &str) -> Option<(String, String)> {
+    let parts: Vec<&str> = folder_name.split('_').collect();
+    let (date, time) = parts.windows(2).find_map(|pair| {
+        let date = pair[0];
+        let time = pair[1];
+        if date.len() == 8
+            && time.len() == 6
+            && date.chars().all(|c| c.is_ascii_digit())
+            && time.chars().all(|c| c.is_ascii_digit())
+        {
+            Some((date, time))
+        } else {
+            None
+        }
+    })?;
+    Some((
+        format!(
+            "{}-{}-{} {}:{}:{}",
+            &date[0..4],
+            &date[4..6],
+            &date[6..8],
+            &time[0..2],
+            &time[2..4],
+            &time[4..6]
+        ),
+        format!(
+            "{}_{}_{}_{}-{}-{}",
+            &date[0..4],
+            &date[4..6],
+            &date[6..8],
+            &time[0..2],
+            &time[2..4],
+            &time[4..6]
+        ),
+    ))
+}
+
 fn cache_file() -> PathBuf {
     let local_appdata = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
         std::env::var("USERPROFILE").unwrap_or_else(|_| "C:\\Users".to_string())
@@ -182,24 +219,7 @@ pub fn list_clips(
                 .get(&game_id)
                 .cloned()
                 .unwrap_or_else(|| game_id.clone());
-            let datetime = if parts.len() >= 3 {
-                let dt_str = format!("{}{}", parts[parts.len() - 2], parts[parts.len() - 1]);
-                if dt_str.len() >= 14 {
-                    Some(format!(
-                        "{}-{}-{} {}:{}:{}",
-                        &dt_str[0..4],
-                        &dt_str[4..6],
-                        &dt_str[6..8],
-                        &dt_str[8..10],
-                        &dt_str[10..12],
-                        &dt_str[12..14]
-                    ))
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
+            let datetime = folder_datetime(&folder_name).map(|value| value.0);
             let duration = get_clip_duration(&folder).unwrap_or_else(|_| "?".to_string());
             ClipInfo {
                 folder,
@@ -280,29 +300,37 @@ fn parse_iso8601_duration(s: &str) -> f64 {
 
 pub async fn generate_thumbnail(clip_folder: &str) -> Result<Option<String>, String> {
     let thumbnail_path = Path::new(clip_folder).join("thumbnail.jpg");
-    if thumbnail_path.exists() {
+    if thumbnail_path.metadata().map(|m| m.len() > 0).unwrap_or(false) {
         return Ok(Some(thumbnail_path.to_string_lossy().to_string()));
     }
     let _permit = THUMB_SEMAPHORE.acquire().await.map_err(|e| e.to_string())?;
     let clip_folder = clip_folder.to_string();
     tokio::task::spawn_blocking(move || {
         let thumbnail_path = Path::new(&clip_folder).join("thumbnail.jpg");
-        if thumbnail_path.exists() {
+        if thumbnail_path.metadata().map(|m| m.len() > 0).unwrap_or(false) {
             return Ok(Some(thumbnail_path.to_string_lossy().to_string()));
         }
+        let temp_thumbnail = Path::new(&clip_folder).join(format!(
+            ".thumbnail-{}.jpg",
+            uuid::Uuid::new_v4()
+        ));
         let session_mpd_files = crate::streaming::find_session_mpd_paths(&clip_folder);
         if let Some(first_mpd) = session_mpd_files.first() {
-            match crate::ffmpeg::extract_first_frame(
+            let result = crate::ffmpeg::extract_first_frame(
                 &first_mpd.to_string_lossy(),
-                &thumbnail_path.to_string_lossy(),
-            ) {
-                Ok(_) => {
-                    if thumbnail_path.exists() {
-                        return Ok(Some(thumbnail_path.to_string_lossy().to_string()));
-                    }
-                }
-                Err(_) => {}
+                &temp_thumbnail.to_string_lossy(),
+            );
+            if let Err(error) = result {
+                let _ = std::fs::remove_file(&temp_thumbnail);
+                log::warn!("Failed to generate thumbnail for {}: {}", clip_folder, error);
+                return Err(error);
             }
+            if temp_thumbnail.metadata().map(|m| m.len() > 0).unwrap_or(false) {
+                let _ = std::fs::remove_file(&thumbnail_path);
+                std::fs::rename(&temp_thumbnail, &thumbnail_path).map_err(|e| e.to_string())?;
+                return Ok(Some(thumbnail_path.to_string_lossy().to_string()));
+            }
+            let _ = std::fs::remove_file(&temp_thumbnail);
         }
         Ok(None)
     })
@@ -315,4 +343,21 @@ fn _unused() -> SystemTime {
 }
 fn _unused2() -> PathBuf {
     PathBuf::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::folder_datetime;
+
+    #[test]
+    fn parses_folder_datetime_with_optional_suffix() {
+        assert_eq!(
+            folder_datetime("bg_787480_20260624_222931_0").map(|value| value.0),
+            Some("2026-06-24 22:29:31".to_string())
+        );
+        assert_eq!(
+            folder_datetime("bg_2001120_20250510_104627").map(|value| value.0),
+            Some("2025-05-10 10:46:27".to_string())
+        );
+    }
 }

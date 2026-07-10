@@ -208,8 +208,10 @@ export default function VideoPreviewDialog({
             state.videoChunkIdx = 0;
             state.audioChunkIdx = 0;
             session = info.sessions[state.sessionIdx];
-            const vInit = await tauriBridge.readSegmentBytes(session.video_init);
-            const aInit = await tauriBridge.readSegmentBytes(session.audio_init);
+            const [vInit, aInit] = await Promise.all([
+              tauriBridge.readSegmentBytes(session.video_init),
+              tauriBridge.readSegmentBytes(session.audio_init),
+            ]);
             if (!activeRef.current || generation !== playbackGenerationRef.current) return;
             if (videoBufferRef.current) tryAppend(videoBufferRef.current, vInit, true);
             if (audioBufferRef.current) tryAppend(audioBufferRef.current, aInit, false);
@@ -221,13 +223,17 @@ export default function VideoPreviewDialog({
         }
 
         const vPath = session.video_chunks[state.videoChunkIdx];
-        const vData = await tauriBridge.readSegmentBytes(vPath);
+        const aPath = state.audioChunkIdx < session.audio_chunks.length
+          ? session.audio_chunks[state.audioChunkIdx]
+          : null;
+        const [vData, aData] = await Promise.all([
+          tauriBridge.readSegmentBytes(vPath),
+          aPath ? tauriBridge.readSegmentBytes(aPath) : Promise.resolve(null),
+        ]);
         if (!activeRef.current || generation !== playbackGenerationRef.current) return;
         if (videoBufferRef.current) tryAppend(videoBufferRef.current, vData, true);
 
-        if (state.audioChunkIdx < session.audio_chunks.length) {
-          const aPath = session.audio_chunks[state.audioChunkIdx];
-          const aData = await tauriBridge.readSegmentBytes(aPath);
+        if (aData) {
           if (!activeRef.current || generation !== playbackGenerationRef.current) return;
           if (audioBufferRef.current) tryAppend(audioBufferRef.current, aData, false);
           state.audioChunkIdx++;
@@ -260,6 +266,16 @@ export default function VideoPreviewDialog({
     setUsingFallback(true);
     setFallbackUrl(null);
     try {
+      await tauriBridge.openMpvPreview(
+        clip.folder,
+        `${clip.game_name} - ${clip.datetime || clip.folder_name}`,
+      );
+      if (activeRef.current && requestId === fallbackRequestRef.current) onClose();
+      return;
+    } catch (mpvError) {
+      console.warn(`Native mpv playback failed (${String(mpvError)}), preparing MP4 fallback`);
+    }
+    try {
       const path = await tauriBridge.preparePreview(clip.folder);
       if (!activeRef.current || requestId !== fallbackRequestRef.current) {
         await tauriBridge.cleanupPreview(path);
@@ -273,7 +289,7 @@ export default function VideoPreviewDialog({
       setError(String(e));
       setLoading(false);
     }
-  }, [clip.folder, disposeMse]);
+  }, [clip, disposeMse, onClose]);
 
   mseFailureRef.current = (reason: string) => {
     void fallbackToFFmpeg(reason);
@@ -327,8 +343,10 @@ export default function VideoPreviewDialog({
         vBuf.addEventListener("abort", onBufferError);
         aBuf.addEventListener("abort", onBufferError);
 
-        const vInit = await tauriBridge.readSegmentBytes(initialSession.video_init);
-        const aInit = await tauriBridge.readSegmentBytes(initialSession.audio_init);
+        const [vInit, aInit] = await Promise.all([
+          tauriBridge.readSegmentBytes(initialSession.video_init),
+          tauriBridge.readSegmentBytes(initialSession.audio_init),
+        ]);
         if (!activeRef.current || generation !== playbackGenerationRef.current || mediaSourceRef.current !== ms) return;
 
         const onVInitDone = () => {
@@ -405,6 +423,21 @@ export default function VideoPreviewDialog({
       const bufferedEnd = buffered.end(buffered.length - 1);
       if (bufferedEnd - video.currentTime < PRELOAD_AHEAD_SECONDS) {
         void feedChunks(playbackGenerationRef.current);
+      }
+      const removeEnd = video.currentTime - 60;
+      if (removeEnd <= 0) return;
+      const state = feedStateRef.current;
+      const videoBuffer = videoBufferRef.current;
+      const audioBuffer = audioBufferRef.current;
+      try {
+        if (videoBuffer && !videoBuffer.updating && !state.videoAppending && state.videoQueue.length === 0 && videoBuffer.buffered.length > 0 && videoBuffer.buffered.start(0) < removeEnd) {
+          videoBuffer.remove(0, removeEnd);
+        }
+        if (audioBuffer && !audioBuffer.updating && !state.audioAppending && state.audioQueue.length === 0 && audioBuffer.buffered.length > 0 && audioBuffer.buffered.start(0) < removeEnd) {
+          audioBuffer.remove(0, removeEnd);
+        }
+      } catch {
+        return;
       }
     };
     video.addEventListener("timeupdate", onTimeUpdate);

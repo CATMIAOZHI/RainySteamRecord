@@ -12,20 +12,14 @@ import SteamVersionPicker from "./components/SteamVersionPicker";
 
 export default function App() {
   const { i18n } = useTranslation();
-  const {
-    config,
-    loadConfig,
-    loadSteamIds,
-    loadClips,
-    loadGameIds,
-    selectedSteamId,
-    selectedMediaType,
-    selectedGameId,
-    setConverting,
-    setProgress,
-    clearSelection,
-    saveConfig,
-  } = useStore();
+  const config = useStore((state) => state.config);
+  const loadConfig = useStore((state) => state.loadConfig);
+  const loadSteamIds = useStore((state) => state.loadSteamIds);
+  const loadClips = useStore((state) => state.loadClips);
+  const loadGameIds = useStore((state) => state.loadGameIds);
+  const selectedSteamId = useStore((state) => state.selectedSteamId);
+  const selectedMediaType = useStore((state) => state.selectedMediaType);
+  const saveConfig = useStore((state) => state.saveConfig);
 
   const [showSettings, setShowSettings] = useState(false);
   const [showVersionPicker, setShowVersionPicker] = useState(false);
@@ -38,11 +32,12 @@ export default function App() {
       setInitialized(true);
     })();
 
-    const unprog = onConversionProgress((data) => setProgress(data));
+    const unprog = onConversionProgress((data) => useStore.getState().setProgress(data));
     const undone = onConversionDone((data) => {
-      setConverting(false);
-      setProgress(null);
-      clearSelection();
+      const state = useStore.getState();
+      state.setConverting(false);
+      state.setProgress(null);
+      state.clearSelection();
       alert(data.message);
     });
 
@@ -56,21 +51,24 @@ export default function App() {
     if (!initialized || !config) return;
     applyTheme(config.theme);
     i18n.changeLanguage(config.language);
+  }, [initialized, config?.theme, config?.language, i18n]);
+
+  useEffect(() => {
+    if (!initialized || !config) return;
     if (!config.userdata_path) {
       setShowVersionPicker(true);
     } else {
       loadSteamIds();
     }
-  }, [initialized, config]);
+  }, [initialized, config?.userdata_path, loadSteamIds]);
 
   useEffect(() => {
     if (selectedSteamId) loadClips();
-  }, [selectedSteamId, selectedMediaType, selectedGameId]);
+  }, [selectedSteamId, selectedMediaType, loadClips]);
 
   const handleVersionSelect = async (path: string) => {
     setShowVersionPicker(false);
     await saveConfig({ userdata_path: path });
-    await loadSteamIds();
   };
 
   if (!initialized || !config) {

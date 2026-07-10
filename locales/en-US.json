@@ -6,7 +6,9 @@
   },
   "common": {
     "convert": "Convert Clips",
-    "exportAll": "Export All",
+    "selectFiltered": "Select Filtered ({{count}})",
+    "deselectFiltered": "Deselect Filtered",
+    "selectFilteredHint": "Select or deselect every clip in the current filter",
     "clearSelection": "Clear Selection",
     "settings": "Settings",
     "exit": "Exit",
@@ -18,7 +20,8 @@
     "apply": "Apply Changes",
     "delete": "Delete",
     "save": "Save",
-    "allGames": "All Games"
+    "allGames": "All Games",
+    "openFileLocation": "Open File Location"
   },
   "filter": {
     "steamId": "Steam ID",
@@ -26,7 +29,10 @@
     "mediaType": "Media Type",
     "allClips": "All Clips",
     "manualClips": "Manual Clips",
-    "backgroundClips": "Background Recordings"
+    "backgroundClips": "Background Recordings",
+    "dateFrom": "From",
+    "dateTo": "To",
+    "clearDate": "Clear Dates"
   },
   "conversion": {
     "processing": "Processing clip {{current}}/{{total}} - {{percent}}%",
@@ -68,7 +74,19 @@
     "doubleClickHint": "Double-click to preview",
     "fallback": "Compatibility mode"
   },
+  "contextMenu": {
+    "preview": "Preview",
+    "nativePreview": "Open in Native Player",
+    "export": "Export This Clip",
+    "regenerateThumbnail": "Regenerate Thumbnail",
+    "renameGame": "Rename Game",
+    "refresh": "Refresh Clip Info",
+    "copyPath": "Copy Path",
+    "delete": "Move to Recycle Bin",
+    "deleteConfirm": "Move clip “{{name}}” to the Recycle Bin?"
+  },
   "messages": {
+    "clipCount": "Showing {{shown}} of {{total}}",
     "noClips": "Clip folder is empty. Please record at least one clip before using.",
     "noSteamFound": "Cannot find Steam userdata directory. Exiting.",
     "deleteInvalidConfirm": "Found {{count}} invalid clips. Delete them?",

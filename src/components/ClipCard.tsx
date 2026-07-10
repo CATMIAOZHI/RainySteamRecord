@@ -1,32 +1,86 @@
-import { useState, useEffect, useRef } from "react";
+import { memo, useState, useEffect } from "react";
+import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import { useStore } from "../stores/app";
 import { tauriBridge, type ClipInfo } from "../lib/tauri-bridge";
 
-export default function ClipCard({ clip, onPreview }: { clip: ClipInfo; onPreview: (clip: ClipInfo) => void }) {
-  const { selectedClips, toggleClipSelection } = useStore();
-  const isSelected = selectedClips.has(clip.folder);
+const thumbnailCache = new Map<string, Promise<string | null>>();
+
+function loadThumbnail(folder: string) {
+  let request = thumbnailCache.get(folder);
+  if (!request) {
+    request = tauriBridge.generateThumbnail(folder)
+      .then((path) => {
+        if (!path) thumbnailCache.delete(folder);
+        return path ? tauriBridge.toAssetUrl(path) : null;
+      })
+      .catch((error) => {
+        thumbnailCache.delete(folder);
+        throw error;
+      });
+    thumbnailCache.set(folder, request);
+  }
+  return request;
+}
+
+function ClipCard({ clip, onPreview }: { clip: ClipInfo; onPreview: (clip: ClipInfo) => void }) {
+  const { t } = useTranslation();
+  const isSelected = useStore((state) => state.selectedClips.has(clip.folder));
+  const toggleClipSelection = useStore((state) => state.toggleClipSelection);
+  const convertClips = useStore((state) => state.convertClips);
+  const loadClips = useStore((state) => state.loadClips);
+  const gameIds = useStore((state) => state.gameIds);
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
   const [thumbLoading, setThumbLoading] = useState(true);
-  const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [renameValue, setRenameValue] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  const handleClick = () => {
-    if (clickTimer.current) {
-      clearTimeout(clickTimer.current);
-      clickTimer.current = null;
-      onPreview(clip);
-    } else {
-      clickTimer.current = setTimeout(() => {
-        clickTimer.current = null;
-        toggleClipSelection(clip.folder);
-      }, 250);
+  const regenerateThumbnail = async () => {
+    setContextMenu(null);
+    setBusy(true);
+    setThumbLoading(true);
+    thumbnailCache.delete(clip.folder);
+    try {
+      const path = await tauriBridge.regenerateThumbnail(clip.folder);
+      const url = path ? `${tauriBridge.toAssetUrl(path)}?v=${Date.now()}` : null;
+      thumbnailCache.set(clip.folder, Promise.resolve(url));
+      setThumbUrl(url);
+    } finally {
+      setThumbLoading(false);
+      setBusy(false);
+    }
+  };
+
+  const saveGameName = async () => {
+    const name = renameValue?.trim();
+    if (!name) return;
+    setBusy(true);
+    const updated = { ...gameIds, [clip.game_id]: name };
+    try {
+      await tauriBridge.saveGameIds(updated);
+      useStore.setState((state) => ({
+        gameIds: updated,
+        clips: state.clips.map((item) => item.game_id === clip.game_id ? { ...item, game_name: name } : item),
+      }));
+      setRenameValue(null);
+    } finally {
+      setBusy(false);
     }
   };
 
   useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("blur", close);
+    window.addEventListener("resize", close);
     return () => {
-      if (clickTimer.current) clearTimeout(clickTimer.current);
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("blur", close);
+      window.removeEventListener("resize", close);
     };
-  }, []);
+  }, [contextMenu]);
 
   useEffect(() => {
     let cancelled = false;
@@ -34,11 +88,9 @@ export default function ClipCard({ clip, onPreview }: { clip: ClipInfo; onPrevie
     setThumbUrl(null);
     (async () => {
       try {
-        const thumbPath = await tauriBridge.generateThumbnail(clip.folder);
+        const url = await loadThumbnail(clip.folder);
         if (cancelled) return;
-        if (thumbPath) {
-          setThumbUrl(tauriBridge.toAssetUrl(thumbPath));
-        }
+        setThumbUrl(url);
       } catch {
         if (!cancelled) setThumbUrl(null);
       } finally {
@@ -50,7 +102,15 @@ export default function ClipCard({ clip, onPreview }: { clip: ClipInfo; onPrevie
 
   return (
     <div
-      onClick={handleClick}
+      onClick={() => toggleClipSelection(clip.folder)}
+      onDoubleClick={() => onPreview(clip)}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        setContextMenu({
+          x: Math.min(event.clientX, window.innerWidth - 190),
+          y: Math.min(event.clientY, window.innerHeight - 326),
+        });
+      }}
       className="group relative cursor-pointer overflow-hidden rounded-xl border-2 bg-surface transition-all duration-200"
       style={{
         borderColor: isSelected ? "var(--accent)" : "var(--border)",
@@ -97,6 +157,63 @@ export default function ClipCard({ clip, onPreview }: { clip: ClipInfo; onPrevie
         <p className="truncate text-sm font-medium text-text">{clip.game_name}</p>
         <p className="mt-0.5 truncate text-xs text-text-muted">{clip.datetime || ""}</p>
       </div>
+      {contextMenu && createPortal(
+        <div
+          className="fixed z-[100] min-w-52 rounded-lg border border-border bg-surface p-1 shadow-2xl"
+          style={{ left: Math.max(8, contextMenu.x), top: Math.max(8, contextMenu.y) }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button className="w-full rounded-md px-3 py-2 text-left text-sm text-text hover:bg-surface-hover" onClick={() => { setContextMenu(null); onPreview(clip); }}>{t("contextMenu.preview")}</button>
+          <button className="w-full rounded-md px-3 py-2 text-left text-sm text-text hover:bg-surface-hover" onClick={() => { setContextMenu(null); void tauriBridge.openMpvPreview(clip.folder, `${clip.game_name} - ${clip.datetime || clip.folder_name}`); }}>{t("contextMenu.nativePreview")}</button>
+          <button className="w-full rounded-md px-3 py-2 text-left text-sm text-text hover:bg-surface-hover" onClick={() => { setContextMenu(null); void convertClips([clip.folder]); }}>{t("contextMenu.export")}</button>
+          <div className="my-1 border-t border-border" />
+          <button disabled={busy} className="w-full rounded-md px-3 py-2 text-left text-sm text-text hover:bg-surface-hover disabled:opacity-40" onClick={() => void regenerateThumbnail()}>{t("contextMenu.regenerateThumbnail")}</button>
+          <button className="w-full rounded-md px-3 py-2 text-left text-sm text-text hover:bg-surface-hover" onClick={() => { setContextMenu(null); setRenameValue(gameIds[clip.game_id] || clip.game_name); }}>{t("contextMenu.renameGame")}</button>
+          <button className="w-full rounded-md px-3 py-2 text-left text-sm text-text hover:bg-surface-hover" onClick={() => { setContextMenu(null); void loadClips(); }}>{t("contextMenu.refresh")}</button>
+          <div className="my-1 border-t border-border" />
+          <button className="w-full rounded-md px-3 py-2 text-left text-sm text-text hover:bg-surface-hover" onClick={() => { setContextMenu(null); void tauriBridge.openFolder(clip.folder); }}>{t("common.openFileLocation")}</button>
+          <button className="w-full rounded-md px-3 py-2 text-left text-sm text-text hover:bg-surface-hover" onClick={() => { setContextMenu(null); void navigator.clipboard.writeText(clip.folder); }}>{t("contextMenu.copyPath")}</button>
+          <div className="my-1 border-t border-border" />
+          <button
+            disabled={busy}
+            className="w-full rounded-md px-3 py-2 text-left text-sm text-red-500 hover:bg-red-500/10 disabled:opacity-40"
+            onClick={() => {
+              setContextMenu(null);
+              if (!window.confirm(t("contextMenu.deleteConfirm", { name: clip.folder_name }))) return;
+              setBusy(true);
+              void tauriBridge.trashClip(clip.folder)
+                .then(() => loadClips())
+                .finally(() => setBusy(false));
+            }}
+          >
+            {t("contextMenu.delete")}
+          </button>
+        </div>,
+        document.body,
+      )}
+      {renameValue !== null && createPortal(
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50" onClick={() => !busy && setRenameValue(null)}>
+          <div className="w-[380px] rounded-2xl border border-border bg-surface p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <h3 className="text-base font-semibold text-text">{t("contextMenu.renameGame")}</h3>
+            <p className="mt-1 text-xs text-text-muted">App ID: {clip.game_id}</p>
+            <input
+              autoFocus
+              value={renameValue}
+              onChange={(event) => setRenameValue(event.target.value)}
+              onKeyDown={(event) => { if (event.key === "Enter") void saveGameName(); }}
+              className="mt-4 h-10 w-full rounded-lg border border-border bg-surface-2 px-3 text-sm text-text outline-none focus:border-accent"
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button disabled={busy} className="rounded-lg border border-border px-4 py-2 text-sm text-text hover:bg-surface-hover disabled:opacity-40" onClick={() => setRenameValue(null)}>{t("common.cancel")}</button>
+              <button disabled={busy || !renameValue.trim()} className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover disabled:opacity-40" onClick={() => void saveGameName()}>{t("common.save")}</button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }
+
+export default memo(ClipCard);

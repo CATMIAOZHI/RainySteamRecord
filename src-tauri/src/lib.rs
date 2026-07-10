@@ -5,17 +5,22 @@
 mod clip;
 mod config;
 mod ffmpeg;
+mod mpv;
+mod process_job;
 mod steam;
 mod streaming;
 mod update;
 
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use tauri::Emitter;
 
 pub struct AppState {
     pub config: Mutex<config::AppConfig>,
     pub game_ids: Mutex<std::collections::HashMap<String, String>>,
-    pub conversion_cancelled: Mutex<bool>,
+    pub conversion_cancelled: Arc<AtomicBool>,
 }
 
 #[tauri::command]
@@ -25,24 +30,24 @@ fn get_config(state: tauri::State<'_, AppState>) -> Result<config::AppConfig, St
 }
 
 #[tauri::command]
-fn save_config(
+async fn save_config(
     userdata_path: Option<String>,
     export_path: Option<String>,
     theme: Option<String>,
+    language: Option<String>,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let mut config = state.config.lock().map_err(|e| e.to_string())?;
-    if let Some(p) = userdata_path {
-        config.userdata_path = Some(p);
-    }
-    if let Some(p) = export_path {
-        config.export_path = p;
-    }
-    if let Some(t) = theme {
-        config.theme = t;
-    }
-    config::save_config(&config)?;
-    Ok(())
+    let snapshot = {
+        let mut config = state.config.lock().map_err(|e| e.to_string())?;
+        if let Some(p) = userdata_path { config.userdata_path = Some(p); }
+        if let Some(p) = export_path { config.export_path = p; }
+        if let Some(t) = theme { config.theme = t; }
+        if let Some(l) = language { config.language = l; }
+        config.clone()
+    };
+    tokio::task::spawn_blocking(move || config::save_config(&snapshot))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -87,13 +92,42 @@ async fn list_clips(
 }
 
 #[tauri::command]
-fn get_clip_duration(clip_folder: String) -> Result<String, String> {
-    Ok(clip::get_clip_duration(&clip_folder)?)
+async fn get_clip_duration(clip_folder: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || clip::get_clip_duration(&clip_folder))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 async fn generate_thumbnail(clip_folder: String) -> Result<Option<String>, String> {
     Ok(clip::generate_thumbnail(&clip_folder).await?)
+}
+
+#[tauri::command]
+async fn regenerate_thumbnail(clip_folder: String) -> Result<Option<String>, String> {
+    let thumbnail_path = std::path::Path::new(&clip_folder).join("thumbnail.jpg");
+    tokio::task::spawn_blocking(move || {
+        if thumbnail_path.exists() {
+            std::fs::remove_file(thumbnail_path).map_err(|e| e.to_string())?;
+        }
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    clip::generate_thumbnail(&clip_folder).await
+}
+
+#[tauri::command]
+async fn trash_clip(clip_folder: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let path = std::path::Path::new(&clip_folder);
+        if !path.is_dir() {
+            return Err("Clip folder does not exist".to_string());
+        }
+        trash::delete(path).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -104,18 +138,34 @@ async fn prepare_preview(clip_folder: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn cleanup_preview(preview_path: String) {
-    ffmpeg::cleanup_preview(&preview_path);
+async fn open_mpv_preview(
+    clip_folder: String,
+    title: String,
+) -> Result<(), String> {
+    mpv::open_preview(&clip_folder, &title)
 }
 
 #[tauri::command]
-fn get_clip_stream_info(clip_folder: String) -> Result<streaming::ClipStreamInfo, String> {
-    streaming::get_clip_stream_info(&clip_folder)
+async fn cleanup_preview(preview_path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || ffmpeg::cleanup_preview(&preview_path))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
-fn read_segment_bytes(file_path: String) -> Result<tauri::ipc::Response, String> {
-    streaming::read_segment_bytes(&file_path)
+async fn get_clip_stream_info(clip_folder: String) -> Result<streaming::ClipStreamInfo, String> {
+    tokio::task::spawn_blocking(move || streaming::get_clip_stream_info(&clip_folder))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn read_segment_bytes(file_path: String) -> Result<tauri::ipc::Response, String> {
+    let data = tokio::task::spawn_blocking(move || streaming::read_segment_bytes(&file_path))
+        .await
+        .map_err(|e| e.to_string())??;
+    Ok(tauri::ipc::Response::new(data))
 }
 
 #[tauri::command]
@@ -127,14 +177,17 @@ fn get_game_ids(
 }
 
 #[tauri::command]
-fn save_game_ids(
+async fn save_game_ids(
     game_ids: std::collections::HashMap<String, String>,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let mut current = state.game_ids.lock().map_err(|e| e.to_string())?;
-    *current = game_ids.clone();
-    config::save_game_ids(&game_ids)?;
-    Ok(())
+    {
+        let mut current = state.game_ids.lock().map_err(|e| e.to_string())?;
+        *current = game_ids.clone();
+    }
+    tokio::task::spawn_blocking(move || config::save_game_ids(&game_ids))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -162,19 +215,27 @@ async fn merge_non_steam_games(
     userdata_path: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<std::collections::HashMap<String, String>, String> {
-    let non_steam = steam::load_non_steam_games(&userdata_path)?;
-    let mut game_ids = state.game_ids.lock().map_err(|e| e.to_string())?;
-    let mut merged = 0;
-    for (app_id, app_name) in &non_steam {
-        if !game_ids.contains_key(app_id) || game_ids.get(app_id) == Some(app_id) {
-            game_ids.insert(app_id.clone(), app_name.clone());
-            merged += 1;
+    let non_steam = tokio::task::spawn_blocking(move || steam::load_non_steam_games(&userdata_path))
+        .await
+        .map_err(|e| e.to_string())??;
+    let (result, merged) = {
+        let mut game_ids = state.game_ids.lock().map_err(|e| e.to_string())?;
+        let mut merged = 0;
+        for (app_id, app_name) in &non_steam {
+            if !game_ids.contains_key(app_id) || game_ids.get(app_id) == Some(app_id) {
+                game_ids.insert(app_id.clone(), app_name.clone());
+                merged += 1;
+            }
         }
-    }
+        (game_ids.clone(), merged)
+    };
     if merged > 0 {
-        config::save_game_ids(&game_ids.clone())?;
+        let snapshot = result.clone();
+        tokio::task::spawn_blocking(move || config::save_game_ids(&snapshot))
+            .await
+            .map_err(|e| e.to_string())??;
     }
-    Ok(game_ids.clone())
+    Ok(result)
 }
 
 #[tauri::command]
@@ -185,25 +246,12 @@ async fn convert_clips(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<bool, String> {
-    {
-        let mut cancelled = state
-            .conversion_cancelled
-            .lock()
-            .map_err(|e| e.to_string())?;
-        *cancelled = false;
-    }
+    state.conversion_cancelled.store(false, Ordering::Release);
     let total = clip_folders.len();
     let mut errors = false;
+    let mut completed = 0;
     for (idx, clip_folder) in clip_folders.iter().enumerate() {
-        {
-            let cancelled = state
-                .conversion_cancelled
-                .lock()
-                .map_err(|e| e.to_string())?;
-            if *cancelled {
-                break;
-            }
-        }
+        if state.conversion_cancelled.load(Ordering::Acquire) { break; }
         let _ = app_handle.emit(
             "conversion-progress",
             serde_json::json!({
@@ -213,28 +261,33 @@ async fn convert_clips(
                 "message": format!("Processing clip {}/{}", idx + 1, total),
             }),
         );
-        match ffmpeg::convert_single_clip(clip_folder, &export_dir, &game_ids).await {
-            Ok(_) => {}
+        match ffmpeg::convert_single_clip(
+            clip_folder,
+            &export_dir,
+            &game_ids,
+            state.conversion_cancelled.clone(),
+        ).await {
+            Ok(_) => { completed += 1; }
             Err(e) => {
                 log::error!("Failed to convert clip {}: {}", clip_folder, e);
                 errors = true;
             }
         }
     }
+    let cancelled = state.conversion_cancelled.load(Ordering::Acquire);
     let _ = app_handle.emit("conversion-done", serde_json::json!({
-        "success": !errors,
-        "message": if !errors { "All clips converted successfully" } else { "Some clips failed to convert" },
+        "success": !errors && !cancelled,
+        "cancelled": cancelled,
+        "completed": completed,
+        "total": total,
+        "message": if cancelled { "Conversion cancelled" } else if !errors { "All clips converted successfully" } else { "Some clips failed to convert" },
     }));
     Ok(!errors)
 }
 
 #[tauri::command]
 fn cancel_conversion(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let mut cancelled = state
-        .conversion_cancelled
-        .lock()
-        .map_err(|e| e.to_string())?;
-    *cancelled = true;
+    state.conversion_cancelled.store(true, Ordering::Release);
     Ok(())
 }
 
@@ -280,7 +333,7 @@ pub fn run() {
         .manage(AppState {
             config: Mutex::new(config),
             game_ids: Mutex::new(game_ids),
-            conversion_cancelled: Mutex::new(false),
+            conversion_cancelled: Arc::new(AtomicBool::new(false)),
         })
         .invoke_handler(tauri::generate_handler![
             get_config,
@@ -291,7 +344,10 @@ pub fn run() {
             list_clips,
             get_clip_duration,
             generate_thumbnail,
+            regenerate_thumbnail,
+            trash_clip,
             prepare_preview,
+            open_mpv_preview,
             cleanup_preview,
             get_clip_stream_info,
             read_segment_bytes,

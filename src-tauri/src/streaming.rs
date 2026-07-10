@@ -1,7 +1,6 @@
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::ipc::Response;
 
 #[derive(Serialize)]
 pub struct SessionInfo {
@@ -45,6 +44,10 @@ pub(crate) fn segment_sort(a: &str, b: &str) -> std::cmp::Ordering {
 }
 
 pub fn find_session_mpd_paths(clip_folder: &str) -> Vec<PathBuf> {
+    let root_mpd = Path::new(clip_folder).join("session.mpd");
+    if root_mpd.is_file() {
+        return vec![root_mpd];
+    }
     let mut files = Vec::new();
     fn walk_dir(dir: &Path, files: &mut Vec<PathBuf>) {
         if let Ok(entries) = fs::read_dir(dir) {
@@ -149,18 +152,21 @@ fn extract_segment_duration(mpd_content: &str) -> f64 {
     }
 }
 
-fn collect_chunks(session_dir: &Path, stream_num: u32) -> Vec<String> {
-    let prefix = format!("chunk-stream{}-", stream_num);
-    let mut chunks: Vec<PathBuf> = Vec::new();
+fn collect_chunks(session_dir: &Path) -> (Vec<String>, Vec<String>) {
+    let mut video_chunks: Vec<PathBuf> = Vec::new();
+    let mut audio_chunks: Vec<PathBuf> = Vec::new();
     if let Ok(entries) = fs::read_dir(session_dir) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with(&prefix) && segment_number(&name).is_some() {
-                chunks.push(entry.path());
+            if segment_number(&name).is_none() { continue; }
+            if name.starts_with("chunk-stream0-") {
+                video_chunks.push(entry.path());
+            } else if name.starts_with("chunk-stream1-") {
+                audio_chunks.push(entry.path());
             }
         }
     }
-    chunks.sort_by(|a, b| {
+    let sort_chunks = |chunks: &mut Vec<PathBuf>| chunks.sort_by(|a, b| {
         segment_sort(
             &a.file_name()
                 .map(|n| n.to_string_lossy().to_string())
@@ -170,10 +176,10 @@ fn collect_chunks(session_dir: &Path, stream_num: u32) -> Vec<String> {
                 .unwrap_or_default(),
         )
     });
-    chunks
-        .into_iter()
-        .map(|p| p.to_string_lossy().to_string())
-        .collect()
+    sort_chunks(&mut video_chunks);
+    sort_chunks(&mut audio_chunks);
+    let stringify = |chunks: Vec<PathBuf>| chunks.into_iter().map(|p| p.to_string_lossy().to_string()).collect();
+    (stringify(video_chunks), stringify(audio_chunks))
 }
 
 pub fn get_clip_stream_info(clip_folder: &str) -> Result<ClipStreamInfo, String> {
@@ -197,8 +203,7 @@ pub fn get_clip_stream_info(clip_folder: &str) -> Result<ClipStreamInfo, String>
         let segment_duration = extract_segment_duration(&mpd_content);
         let video_init = dir.join("init-stream0.m4s").to_string_lossy().to_string();
         let audio_init = dir.join("init-stream1.m4s").to_string_lossy().to_string();
-        let video_chunks = collect_chunks(dir, 0);
-        let audio_chunks = collect_chunks(dir, 1);
+        let (video_chunks, audio_chunks) = collect_chunks(dir);
         if session_duration <= 0.0 {
             session_duration = video_chunks.len() as f64 * segment_duration;
         }
@@ -221,9 +226,16 @@ pub fn get_clip_stream_info(clip_folder: &str) -> Result<ClipStreamInfo, String>
     })
 }
 
-pub fn read_segment_bytes(file_path: &str) -> Result<Response, String> {
+pub fn read_segment_bytes(file_path: &str) -> Result<Vec<u8>, String> {
+    const MAX_SEGMENT_SIZE: u64 = 64 * 1024 * 1024;
+    let size = fs::metadata(file_path)
+        .map_err(|e| format!("Failed to inspect segment: {}", e))?
+        .len();
+    if size > MAX_SEGMENT_SIZE {
+        return Err("Segment exceeds 64 MiB limit".to_string());
+    }
     let data = fs::read(file_path).map_err(|e| format!("Failed to read segment: {}", e))?;
-    Ok(Response::new(data))
+    Ok(data)
 }
 
 #[cfg(test)]

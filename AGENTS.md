@@ -35,7 +35,9 @@ All backend logic is in Rust (no Node sidecar). Tauri commands handle everything
 |--------|------|-------------|
 | config | `config.rs` | JSON config + GameIDs.json in `%LOCALAPPDATA%\RainySteamRecord\` |
 | steam | `steam.rs` | Steam discovery, binary VDF parser, non-Steam CRC32 appid, Steam API |
-| ffmpeg | `ffmpeg.rs` | m4s concat → mp4, natural sort, thumbnail extraction, FFmpeg fallback preview, all subprocesses use `CREATE_NO_WINDOW` |
+| ffmpeg | `ffmpeg.rs` | m4s concat → mp4, thumbnail extraction, cancellable exports, FFmpeg fallback preview |
+| mpv | `mpv.rs` | Launch bundled mpv for native HEVC/DASH playback |
+| process_job | `process_job.rs` | Windows Job Object ownership for FFmpeg/mpv child processes |
 | streaming | `streaming.rs` | MSE streaming preview: session.mpd parsing, codec/duration extraction, segment byte reading |
 | clip | `clip.rs` | Clip scanning, duration parsing (ISO 8601), thumbnail generation (Semaphore-limited), file cache (`clips_cache.json`) |
 | update | `update.rs` | GitHub release check |
@@ -46,7 +48,7 @@ All backend logic is in Rust (no Node sidecar). Tauri commands handle everything
 |----------|--------|---------|
 | `find_session_mpd_paths` | `streaming.rs` | Recursive walk to find all `session.mpd` files — shared by `ffmpeg.rs` and `streaming.rs` |
 | `get_clip_stream_info` | `streaming.rs` | Parse MPD XML → codec strings, durations, chunk file paths per session |
-| `read_segment_bytes` | `streaming.rs` | Read m4s file → `tauri::ipc::Response` (raw bytes, no JSON serialization) |
+| `read_segment_bytes` | `streaming.rs` | Read a size-limited m4s segment as raw bytes |
 | `merge_clip_to_file` | `ffmpeg.rs` | Shared by `convert_single_clip` (export) and `prepare_preview` (FFmpeg fallback) |
 | `prepare_preview` | `ffmpeg.rs` | Sync fn, wrapped in `spawn_blocking` at command layer |
 | `convert_single_clip` | `ffmpeg.rs` | Async, uses `spawn_blocking` for blocking FFmpeg I/O |
@@ -56,11 +58,11 @@ All backend logic is in Rust (no Node sidecar). Tauri commands handle everything
 | Component | File | Description |
 |-----------|------|-------------|
 | TitleBar | `components/TitleBar.tsx` | Frameless window controls (minimize/close) |
-| FilterBar | `components/FilterBar.tsx` | SteamID / Game / Media type selects |
-| ClipGrid | `components/ClipGrid.tsx` | Auto-fill responsive grid, pagination, manages preview state |
-| ClipCard | `components/ClipCard.tsx` | Thumbnail card, single-click select (250ms timer), double-click preview |
-| VideoPreviewDialog | `components/VideoPreviewDialog.tsx` | MSE player with seekable random access + FFmpeg fallback, ESC to close, progressive chunk loading |
-| BottomBar | `components/BottomBar.tsx` | Pagination + Convert/ExportAll/Clear buttons + progress bar |
+| FilterBar | `components/FilterBar.tsx` | Steam ID, game, media type, and date-range filters |
+| ClipGrid | `components/ClipGrid.tsx` | Responsive grid with batched infinite scrolling and preview state |
+| ClipCard | `components/ClipCard.tsx` | Selection, preview, thumbnail, and clip-management context menu |
+| VideoPreviewDialog | `components/VideoPreviewDialog.tsx` | MSE player with native mpv and FFmpeg fallbacks |
+| BottomBar | `components/BottomBar.tsx` | Filtered selection, conversion controls, and progress bar |
 | SettingsDialog | `components/SettingsDialog.tsx` | Theme/language/export path/game IDs/updates |
 | SteamVersionPicker | `components/SteamVersionPicker.tsx` | First-run Steam location selection |
 
@@ -76,25 +78,27 @@ All backend logic is in Rust (no Node sidecar). Tauri commands handle everything
 7. Multi-session: append next session's init segment + reset `timestampOffset`
 8. Cleanup: `endOfStream()`, `revokeObjectURL()`, reset state
 
-### FFmpeg Fallback (Secondary Path)
-- Triggered when: MSE unsupported, codec not supported (e.g. HEVC on some systems), or any MSE error
-- `preparePreview(clipFolder)` → FFmpeg concat+mux → temp mp4 → `convertFileSrc()` → `<video src>`
-- `cleanupPreview(path)` called on dialog close to delete temp file
+### Preview Fallbacks
+- MSE failure first launches bundled mpv against `session.mpd`, providing native HEVC playback without pre-merging the recording.
+- If mpv cannot launch, `preparePreview(clipFolder)` uses FFmpeg concat+mux to create a temporary MP4 for `<video>`.
+- `cleanupPreview(path)` deletes temporary FFmpeg previews when the dialog closes.
 
-### Tauri Commands (22 total)
+### Tauri Commands
 
 | Command | Type | Purpose |
 |---------|------|---------|
-| `get_config` / `save_config` | sync | App configuration |
+| `get_config` / `save_config` | sync / async | App configuration |
 | `find_steam_userdata` / `validate_userdata` / `list_steam_ids` | sync | Steam discovery |
 | `list_clips` | async (spawn_blocking) | Scan clip folders, with file cache support |
-| `get_clip_duration` | sync | Parse ISO 8601 duration from MPD |
+| `get_clip_duration` | async (spawn_blocking) | Parse ISO 8601 duration from MPD |
 | `generate_thumbnail` | async (Semaphore 2 + spawn_blocking) | Extract first frame via FFmpeg, cached to `thumbnail.jpg` |
-| `get_clip_stream_info` | sync | Parse MPD for MSE streaming |
-| `read_segment_bytes` | sync | Read m4s file as raw bytes |
+| `regenerate_thumbnail` / `trash_clip` | async | Rebuild a thumbnail or move a clip directory to the Windows Recycle Bin |
+| `open_mpv_preview` | async | Open `session.mpd` in the bundled native mpv window |
+| `get_clip_stream_info` | async (spawn_blocking) | Parse MPD for MSE streaming |
+| `read_segment_bytes` | async (spawn_blocking) | Read a size-limited m4s file as raw bytes |
 | `prepare_preview` | async (spawn_blocking) | FFmpeg concat → temp mp4 (fallback) |
-| `cleanup_preview` | sync | Delete temp preview file |
-| `get_game_ids` / `save_game_ids` | sync | Game name mapping |
+| `cleanup_preview` | async (spawn_blocking) | Delete temp preview file |
+| `get_game_ids` / `save_game_ids` | sync / async | Game name mapping |
 | `fetch_game_name` | async | Steam API lookup (single) |
 | `fetch_game_names_batch` | async | Steam API lookup (4-concurrent batch) |
 | `merge_non_steam_games` | async | Import non-Steam game names |
@@ -138,7 +142,7 @@ npm run typecheck    # tsc --noEmit
 ## CI/CD
 
 - **Release workflow**: `.github/workflows/release.yml`
-- Downloads FFmpeg during CI (not committed to git, 138MB)
+- Downloads FFmpeg and mpv during CI; media binaries are not committed
 - `tauri-action` builds NSIS + MSI installers
 - Triggered by pushing a tag (e.g. `v0.1.0`)
 - Release is created as draft, then published via `gh release edit --draft=false`
@@ -176,6 +180,7 @@ In `ffmpeg_path()`:
 - **Rainy style**: pink/sakura color scheme is default theme
 - **Commit messages**: concise, descriptive
 - **All `std::process::Command`** on Windows must use `CREATE_NO_WINDOW` (`0x08000000`) via `creation_flags()` to avoid flashing console windows
+- **All long-lived FFmpeg/mpv children** must be assigned to `ProcessJob`; failure to assign must terminate the child immediately
 - **Run lint + typecheck** before considering a task complete
 - **README style**: Rainy family format with 🐱, 🌸 emojis, feature tables, architecture diagrams
 

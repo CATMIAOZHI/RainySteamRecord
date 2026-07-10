@@ -35,6 +35,9 @@ src-tauri/.cargo/
 # Temp
 tmp/
 *.tmp
+*.tsbuildinfo
 
-# ffmpeg binary (downloaded during CI build, not committed)
+# Media binaries (downloaded during CI build, not committed)
 src-tauri/binaries/ffmpeg.exe
+src-tauri/binaries/mpv.exe
+src-tauri/binaries/d3dcompiler_43.dll
