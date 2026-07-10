@@ -58,18 +58,10 @@ fn natural_sort(a: &str, b: &str) -> std::cmp::Ordering {
 }
 
 fn find_session_mpd_files(clip_folder: &str) -> Vec<String> {
-    let mut files = Vec::new();
-    if let Ok(entries) = fs::read_dir(clip_folder) {
-        for entry in entries.flatten() {
-            if entry.path().is_dir() {
-                let mpd = entry.path().join("session.mpd");
-                if mpd.is_file() {
-                    files.push(mpd.to_string_lossy().to_string());
-                }
-            }
-        }
-    }
-    files
+    crate::streaming::find_session_mpd_paths(clip_folder)
+        .into_iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect()
 }
 
 fn concat_init_and_chunks(data_dir: &Path, stream_num: u32) -> Result<PathBuf, String> {
@@ -87,8 +79,8 @@ fn concat_init_and_chunks(data_dir: &Path, stream_num: u32) -> Result<PathBuf, S
         }
     }
     chunks.sort_by(|a, b| natural_sort(
-        &a.file_name().unwrap().to_string_lossy(),
-        &b.file_name().unwrap().to_string_lossy(),
+        &a.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+        &b.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
     ));
     if chunks.is_empty() {
         return Err(format!("No chunk files for stream{}", stream_num));
@@ -257,8 +249,8 @@ pub fn extract_first_frame(session_mpd_path: &str, output_thumbnail_path: &str) 
         }
     }
     chunks.sort_by(|a, b| natural_sort(
-        &a.file_name().unwrap().to_string_lossy(),
-        &b.file_name().unwrap().to_string_lossy(),
+        &a.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+        &b.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
     ));
     if chunks.is_empty() {
         return Err("No chunk files".to_string());

@@ -29,20 +29,30 @@ fn natural_sort(a: &str, b: &str) -> std::cmp::Ordering {
     anum.cmp(&bnum)
 }
 
-fn find_session_dirs(clip_folder: &str) -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    if let Ok(entries) = fs::read_dir(clip_folder) {
-        for entry in entries.flatten() {
-            if entry.path().is_dir() {
-                let mpd = entry.path().join("session.mpd");
-                if mpd.is_file() {
-                    dirs.push(entry.path());
+pub fn find_session_mpd_paths(clip_folder: &str) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    fn walk_dir(dir: &Path, files: &mut Vec<PathBuf>) {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    walk_dir(&path, files);
+                } else if path.file_name().map(|n| n == "session.mpd").unwrap_or(false) {
+                    files.push(path);
                 }
             }
         }
     }
-    dirs.sort();
-    dirs
+    walk_dir(Path::new(clip_folder), &mut files);
+    files.sort();
+    files
+}
+
+fn find_session_dirs(clip_folder: &str) -> Vec<PathBuf> {
+    find_session_mpd_paths(clip_folder)
+        .into_iter()
+        .filter_map(|p| p.parent().map(|d| d.to_path_buf()))
+        .collect()
 }
 
 fn extract_codec(mpd_content: &str, content_type: &str) -> Option<String> {
@@ -89,8 +99,8 @@ fn collect_chunks(session_dir: &Path, stream_num: u32) -> Vec<String> {
         }
     }
     chunks.sort_by(|a, b| natural_sort(
-        &a.file_name().unwrap().to_string_lossy(),
-        &b.file_name().unwrap().to_string_lossy(),
+        &a.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+        &b.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
     ));
     chunks.into_iter().map(|p| p.to_string_lossy().to_string()).collect()
 }

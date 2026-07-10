@@ -41,6 +41,7 @@ export default function VideoPreviewDialog({
   const { t } = useTranslation();
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaSourceRef = useRef<MediaSource | null>(null);
+  const objectUrlRef = useRef<string | null>(null);
   const videoBufferRef = useRef<SourceBuffer | null>(null);
   const audioBufferRef = useRef<SourceBuffer | null>(null);
   const streamInfoRef = useRef<ClipStreamInfo | null>(null);
@@ -154,7 +155,9 @@ export default function VideoPreviewDialog({
     mediaSourceRef.current = ms;
     const video = videoRef.current;
     if (!video) return;
-    video.src = URL.createObjectURL(ms);
+    const url = URL.createObjectURL(ms);
+    objectUrlRef.current = url;
+    video.src = url;
 
     ms.addEventListener("sourceopen", async () => {
       try {
@@ -228,6 +231,10 @@ export default function VideoPreviewDialog({
         video.pause();
         video.removeAttribute("src");
         video.load();
+      }
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
       }
       if (mediaSourceRef.current?.readyState === "open") {
         try { mediaSourceRef.current.endOfStream(); } catch { /* ignore */ }
