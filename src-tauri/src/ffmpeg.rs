@@ -77,7 +77,6 @@ fn concat_init_and_chunks(data_dir: &Path, stream_num: u32) -> Result<PathBuf, S
     if !init_file.exists() {
         return Err(format!("init-stream{}.m4s missing", stream_num));
     }
-    let chunk_pattern = format!("chunk-stream{}-*.m4s", stream_num);
     let mut chunks: Vec<PathBuf> = Vec::new();
     if let Ok(entries) = fs::read_dir(data_dir) {
         for entry in entries.flatten() {
@@ -230,6 +229,7 @@ pub async fn convert_single_clip(
 ) -> Result<(), String> {
     let clip_folder = clip_folder.to_string();
     let export_dir = export_dir.to_string();
+    let game_ids = game_ids.clone();
     tokio::task::spawn_blocking(move || {
         let output_filename = generate_output_filename(&clip_folder, &game_ids)?;
         let output_file = get_unique_filename(&export_dir, &output_filename);
@@ -247,7 +247,6 @@ pub fn extract_first_frame(session_mpd_path: &str, output_thumbnail_path: &str) 
     if !init_video.exists() {
         return Err("init-stream0.m4s missing".to_string());
     }
-    let chunk_pattern = "chunk-stream0-*.m4s";
     let mut chunks: Vec<PathBuf> = Vec::new();
     if let Ok(entries) = fs::read_dir(data_dir) {
         for entry in entries.flatten() {
