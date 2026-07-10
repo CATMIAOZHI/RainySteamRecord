@@ -485,7 +485,7 @@ export default function VideoPreviewDialog({
       onClick={onClose}
     >
       <div
-        className="w-[900px] max-w-[90vw] overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl"
+        className="w-full max-w-[900px] mx-4 overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-3">

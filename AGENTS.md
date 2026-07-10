@@ -10,7 +10,7 @@
 - **License**: GPL-3.0 (portions based on SteamClip by Nastas95, also GPL-3.0)
 - **Platform**: Windows only
 - **Language**: UI bilingual (zh-CN default / en-US) via i18next; code comments/logs in English
-- **Release**: https://github.com/CATMIAOZHI/RainySteamRecord/releases/tag/v0.1.0
+- **Release**: https://github.com/CATMIAOZHI/RainySteamRecord/releases/tag/v0.1.1
 
 ## Architecture
 
@@ -36,7 +36,7 @@ All backend logic is in Rust (no Node sidecar). Tauri commands handle everything
 | config | `config.rs` | JSON config + GameIDs.json in `%LOCALAPPDATA%\RainySteamRecord\` |
 | steam | `steam.rs` | Steam discovery, binary VDF parser, non-Steam CRC32 appid, Steam API |
 | ffmpeg | `ffmpeg.rs` | m4s concat → mp4, natural sort, thumbnail extraction, FFmpeg fallback preview |
-| streaming | `streaming.rs` | MSE streaming preview: session.mpd parsing, codec extraction, segment byte reading |
+| streaming | `streaming.rs` | MSE streaming preview: session.mpd parsing, codec/duration extraction, segment byte reading |
 | clip | `clip.rs` | Clip scanning, duration parsing (ISO 8601), thumbnail generation |
 | update | `update.rs` | GitHub release check |
 
@@ -45,7 +45,7 @@ All backend logic is in Rust (no Node sidecar). Tauri commands handle everything
 | Function | Module | Purpose |
 |----------|--------|---------|
 | `find_session_mpd_paths` | `streaming.rs` | Recursive walk to find all `session.mpd` files — shared by `ffmpeg.rs` and `streaming.rs` |
-| `get_clip_stream_info` | `streaming.rs` | Parse MPD XML → codec strings + chunk file paths per session |
+| `get_clip_stream_info` | `streaming.rs` | Parse MPD XML → codec strings, durations, chunk file paths per session |
 | `read_segment_bytes` | `streaming.rs` | Read m4s file → `tauri::ipc::Response` (raw bytes, no JSON serialization) |
 | `merge_clip_to_file` | `ffmpeg.rs` | Shared by `convert_single_clip` (export) and `prepare_preview` (FFmpeg fallback) |
 | `prepare_preview` | `ffmpeg.rs` | Sync fn, wrapped in `spawn_blocking` at command layer |
@@ -59,7 +59,7 @@ All backend logic is in Rust (no Node sidecar). Tauri commands handle everything
 | FilterBar | `components/FilterBar.tsx` | SteamID / Game / Media type selects |
 | ClipGrid | `components/ClipGrid.tsx` | 3-column grid, pagination, manages preview state |
 | ClipCard | `components/ClipCard.tsx` | Thumbnail card, single-click select (250ms timer), double-click preview |
-| VideoPreviewDialog | `components/VideoPreviewDialog.tsx` | MSE player + FFmpeg fallback, ESC to close, progressive chunk loading |
+| VideoPreviewDialog | `components/VideoPreviewDialog.tsx` | MSE player with seekable random access + FFmpeg fallback, ESC to close, progressive chunk loading |
 | BottomBar | `components/BottomBar.tsx` | Pagination + Convert/ExportAll/Clear buttons + progress bar |
 | SettingsDialog | `components/SettingsDialog.tsx` | Theme/language/export path/game IDs/updates |
 | SteamVersionPicker | `components/SteamVersionPicker.tsx` | First-run Steam location selection |
@@ -67,20 +67,21 @@ All backend logic is in Rust (no Node sidecar). Tauri commands handle everything
 ## Video Preview Pipeline
 
 ### MSE Streaming (Primary Path)
-1. `getClipStreamInfo(clipFolder)` → Rust parses `session.mpd` XML → returns codec strings + chunk file paths
-2. Create `MediaSource`, `addSourceBuffer` for video + audio with codec MIME types
+1. `getClipStreamInfo(clipFolder)` → Rust parses `session.mpd` XML → returns codec strings, durations, chunk file paths per session
+2. Create `MediaSource`, set `ms.duration` to total clip duration, `addSourceBuffer` for video + audio
 3. Append init segments (`init-stream0.m4s` / `init-stream1.m4s`)
 4. Append first batch of chunks → playback starts (~100ms)
-5. `timeupdate` listener: when playback head <10s from buffer end, load next batch (3 chunks)
-6. Multi-session: append next session's init segment + reset `timestampOffset`
-7. Cleanup: `endOfStream()`, `revokeObjectURL()`, reset state
+5. `timeupdate` listener: when playback head <30s from buffer end, load next batch (5 chunks)
+6. Seek to unbuffered position: `seeking` event → dispose MSE, rebuild from target chunk with `timestampOffset` aligned to real timeline
+7. Multi-session: append next session's init segment + reset `timestampOffset`
+8. Cleanup: `endOfStream()`, `revokeObjectURL()`, reset state
 
 ### FFmpeg Fallback (Secondary Path)
 - Triggered when: MSE unsupported, codec not supported (e.g. HEVC on some systems), or any MSE error
 - `preparePreview(clipFolder)` → FFmpeg concat+mux → temp mp4 → `convertFileSrc()` → `<video src>`
 - `cleanupPreview(path)` called on dialog close to delete temp file
 
-### Tauri Commands (20 total)
+### Tauri Commands (21 total)
 
 | Command | Type | Purpose |
 |---------|------|---------|
@@ -162,8 +163,9 @@ In `ffmpeg_path()`:
 - **Working dir**: `C:\Users\CAT\Documents\workspace\steamclip\RainySteamRecord`
 - **Rust cargo path**: `C:\Users\CAT\.cargo\bin`
 - **gh CLI**: v2.96.0, authenticated as CATMIAOZHI
-- **MSVC Build Tools**: NOT installed (needed for `cargo build` / `tauri:dev`)
+- **MSVC Build Tools**: Installed (VS 2022 Build Tools, MSVC 14.44, Windows SDK) — `cargo build`, `cargo test`, `tauri:dev`, `tauri:build` all work locally
 - **npm**: requires `--legacy-peer-deps` (eslint peer dependency conflict)
+- **Tauri `protocol-asset` feature**: enabled in `Cargo.toml` (required by `assetProtocol` scope in `tauri.conf.json`)
 
 ## Conventions
 

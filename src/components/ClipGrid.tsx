@@ -27,7 +27,7 @@ export default function ClipGrid() {
           {t("messages.noClips")}
         </div>
       ) : (
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4">
           {visible.map((clip) => (
             <ClipCard key={clip.folder} clip={clip} onPreview={setPreviewClip} />
           ))}

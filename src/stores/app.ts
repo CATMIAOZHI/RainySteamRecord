@@ -81,12 +81,23 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   loadClips: async () => {
-    const { config, selectedSteamId, selectedMediaType } = get();
+    const { config, selectedSteamId, selectedMediaType, gameIds } = get();
     if (!config?.userdata_path || !selectedSteamId) return;
     set({ loading: true });
     try {
       const clips = await tauriBridge.listClips(config.userdata_path, selectedSteamId, selectedMediaType);
       set({ clips, loading: false, clipIndex: 0 });
+      const unknownIds = [...new Set(clips.map((c) => c.game_id))].filter(
+        (id) => !gameIds[id] || gameIds[id] === id
+      );
+      if (unknownIds.length > 0) {
+        try {
+          const updated = await tauriBridge.fetchGameNamesBatch(unknownIds);
+          set({ gameIds: updated });
+        } catch (e) {
+          console.error("Failed to fetch game names:", e);
+        }
+      }
     } catch (e) {
       console.error("Failed to load clips:", e);
       set({ clips: [], loading: false });

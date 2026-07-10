@@ -61,6 +61,7 @@ export const tauriBridge = {
   getGameIds: () => invoke<GameIds>("get_game_ids"),
   saveGameIds: (gameIds: GameIds) => invoke<void>("save_game_ids", { gameIds }),
   fetchGameName: (gameId: string) => invoke<string>("fetch_game_name", { gameId }),
+  fetchGameNamesBatch: (gameIds: string[]) => invoke<GameIds>("fetch_game_names_batch", { gameIds }),
   mergeNonSteamGames: (userdataPath: string) => invoke<GameIds>("merge_non_steam_games", { userdataPath }),
   convertClips: (clipFolders: string[], exportDir: string, gameIds: GameIds) =>
     invoke<boolean>("convert_clips", { clipFolders, exportDir, gameIds }),

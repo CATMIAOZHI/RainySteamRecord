@@ -77,7 +77,9 @@ pub fn find_steam_root(userdata_path: &str) -> Option<PathBuf> {
 }
 
 pub fn get_custom_record_path(userdata_dir: &str) -> Option<String> {
-    let localconfig_path = Path::new(userdata_dir).join("config").join("localconfig.vdf");
+    let localconfig_path = Path::new(userdata_dir)
+        .join("config")
+        .join("localconfig.vdf");
     if !localconfig_path.is_file() {
         return None;
     }
@@ -207,7 +209,10 @@ pub fn parse_binary_vdf(data: &[u8]) -> Vec<HashMap<String, VdfValue>> {
 }
 
 fn read_string(data: &[u8], pos: usize) -> Result<(String, usize), String> {
-    let end = data.iter().skip(pos).position(|&b| b == 0x00)
+    let end = data
+        .iter()
+        .skip(pos)
+        .position(|&b| b == 0x00)
         .ok_or("Unterminated string")?;
     let end_abs = pos + end;
     let s = String::from_utf8_lossy(&data[pos..end_abs]).to_string();
@@ -243,7 +248,8 @@ fn parse_map(data: &[u8], mut pos: usize) -> Result<(HashMap<String, VdfValue>, 
                 if pos + 4 > data.len() {
                     break;
                 }
-                let val = u32::from_le_bytes([data[pos], data[pos+1], data[pos+2], data[pos+3]]);
+                let val =
+                    u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
                 pos += 4;
                 result.insert(key, VdfValue::Int(val));
             }
@@ -267,13 +273,25 @@ pub async fn fetch_game_name(game_id: &str) -> String {
         "https://store.steampowered.com/api/appdetails?appids={}&filters=basic",
         game_id
     );
-    let client = reqwest::Client::new();
-    match client.get(&url).timeout(std::time::Duration::from_secs(5)).send().await {
+    let client = reqwest::Client::builder()
+        .user_agent("RainySteamRecord/0.1.1")
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+    match client.get(&url).send().await {
         Ok(resp) => {
             if let Ok(json) = resp.json::<serde_json::Value>().await {
                 if let Some(data) = json.get(game_id) {
-                    if data.get("success").and_then(|s| s.as_bool()).unwrap_or(false) {
-                        if let Some(name) = data.get("data").and_then(|d| d.get("name")).and_then(|n| n.as_str()) {
+                    if data
+                        .get("success")
+                        .and_then(|s| s.as_bool())
+                        .unwrap_or(false)
+                    {
+                        if let Some(name) = data
+                            .get("data")
+                            .and_then(|d| d.get("name"))
+                            .and_then(|n| n.as_str())
+                        {
                             return name.to_string();
                         }
                     }
@@ -283,4 +301,49 @@ pub async fn fetch_game_name(game_id: &str) -> String {
         Err(_) => {}
     }
     game_id.to_string()
+}
+
+pub async fn fetch_game_names_batch(
+    game_ids: &[String],
+    existing: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut result = existing.clone();
+    let client = reqwest::Client::builder()
+        .user_agent("RainySteamRecord/0.1.1")
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+    for game_id in game_ids {
+        if result.contains_key(game_id) {
+            continue;
+        }
+        if !game_id.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        let url = format!(
+            "https://store.steampowered.com/api/appdetails?appids={}&filters=basic",
+            game_id
+        );
+        if let Ok(resp) = client.get(&url).send().await {
+            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                if let Some(data) = json.get(game_id.as_str()) {
+                    if data
+                        .get("success")
+                        .and_then(|s| s.as_bool())
+                        .unwrap_or(false)
+                    {
+                        if let Some(name) = data
+                            .get("data")
+                            .and_then(|d| d.get("name"))
+                            .and_then(|n| n.as_str())
+                        {
+                            result.insert(game_id.clone(), name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+    result
 }

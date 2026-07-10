@@ -12,7 +12,10 @@ export default function TitleBar() {
       <span data-tauri-drag-region className="text-sm font-semibold text-accent">
         RainySteamRecord
       </span>
-      <div className="flex items-center gap-1">
+      <div
+        className="flex items-center gap-1"
+        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+      >
         <button
           onClick={() => appWindow.minimize()}
           className="flex h-7 w-7 items-center justify-center rounded text-text-muted hover:bg-surface-hover hover:text-text"
