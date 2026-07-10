@@ -29,4 +29,4 @@ pub async fn check_latest_release() -> Result<ReleaseInfo, String> {
     })
 }
 
-pub const CURRENT_VERSION: &str = "v0.1.0";
+pub const CURRENT_VERSION: &str = "v0.1.1";

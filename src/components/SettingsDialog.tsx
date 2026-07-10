@@ -130,7 +130,7 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
           </button>
           {updateInfo && !("error" in updateInfo && updateInfo.error) && (
             <p className="mb-2 text-xs text-text-muted">
-              {updateInfo && !("error" in updateInfo) && updateInfo.version === "v0.1.0"
+              {updateInfo && !("error" in updateInfo) && updateInfo.version === "v0.1.1"
                 ? t("messages.noUpdate")
                 : updateInfo && !("error" in updateInfo) ? t("messages.updateAvailable", { version: updateInfo.version }) : ""}
             </p>
@@ -139,7 +139,7 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
 
         {/* Footer */}
         <div className="flex items-center justify-between border-t border-border pt-3">
-          <span className="text-xs text-text-muted">{t("settings.version")}: v0.1.0</span>
+          <span className="text-xs text-text-muted">{t("settings.version")}: v0.1.1</span>
           <button
             onClick={handleSave}
             className="rounded-lg bg-accent px-5 py-1.5 text-sm font-semibold text-white hover:bg-accent-hover"
