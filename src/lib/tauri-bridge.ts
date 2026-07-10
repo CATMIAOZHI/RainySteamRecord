@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 export interface AppConfig {
@@ -47,6 +47,7 @@ export const tauriBridge = {
   checkForUpdates: () => invoke<ReleaseInfo>("check_for_updates"),
   openFolder: (path: string) => invoke<void>("open_folder", { path }),
   getConfigDir: () => invoke<string>("get_config_dir"),
+  toAssetUrl: (filePath: string) => convertFileSrc(filePath),
 };
 
 export function onConversionProgress(callback: (data: { current: number; total: number; percent: number; message: string }) => void) {

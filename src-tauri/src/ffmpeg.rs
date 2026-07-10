@@ -9,12 +9,32 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn ffmpeg_path() -> Result<String, String> {
+    if let Ok(exe_dir) = std::env::current_exe() {
+        if let Some(parent) = exe_dir.parent() {
+            let candidates = [
+                parent.join("ffmpeg.exe"),
+                parent.join("binaries").join("ffmpeg.exe"),
+                parent.join("resources").join("ffmpeg.exe"),
+            ];
+            for c in &candidates {
+                if c.exists() {
+                    return Ok(c.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
     let local_appdata = std::env::var("LOCALAPPDATA").map_err(|e| e.to_string())?;
-    let bundled = PathBuf::from(&local_appdata)
+    let dev_bundled = PathBuf::from(&local_appdata)
         .join("RainySteamRecord")
         .join("ffmpeg.exe");
-    if bundled.exists() {
-        return Ok(bundled.to_string_lossy().to_string());
+    if dev_bundled.exists() {
+        return Ok(dev_bundled.to_string_lossy().to_string());
+    }
+    let dev_local = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("binaries")
+        .join("ffmpeg.exe");
+    if dev_local.exists() {
+        return Ok(dev_local.to_string_lossy().to_string());
     }
     let which = Command::new("where").arg("ffmpeg").output();
     if let Ok(output) = which {

@@ -7,9 +7,6 @@ build/
 src-tauri/target/
 src-tauri/gen/
 
-# Node sidecar build
-src-node/dist/
-
 # Logs
 logs/
 *.log
@@ -38,3 +35,6 @@ src-tauri/.cargo/
 # Temp
 tmp/
 *.tmp
+
+# ffmpeg binary (downloaded during CI build, not committed)
+src-tauri/binaries/ffmpeg.exe
