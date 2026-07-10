@@ -1,7 +1,8 @@
 {
   "app": {
     "title": "RainySteamRecord",
-    "subtitle": "Steam Recording Browser & Exporter"
+    "subtitle": "Steam Recording Browser & Exporter",
+    "sidecarEvents": "Sidecar events:"
   },
   "common": {
     "convert": "Convert Clips",

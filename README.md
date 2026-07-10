@@ -4,46 +4,48 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows-blue?style=for-the-badge)](#)
 [![Tech](https://img.shields.io/badge/Tauri-2.x-orange?style=for-the-badge)](https://tauri.app)
 
-> A modern GUI tool to browse and export Steam game recordings (DASH `.m4s` → `.mp4`).
+[English](README_EN.md) | 中文
 
-Steam stores recordings as segmented `.m4s` files (DASH format). The native export works, but often produces pixelation and stuttering. RainySteamRecord converts those recordings to clean `.mp4` files using FFmpeg, with no artifacts and no length limits.
+> 一个现代化的 Windows 桌面工具，用于浏览和导出 Steam 游戏录像（DASH `.m4s` → `.mp4`）。
 
----
-
-## Features
-
-- **Clip browser** — recordings displayed in a thumbnail grid with virtual scrolling, smooth animations, and page controls
-- **Automatic game names** — identifies the game for each clip automatically, including non-Steam games
-- **FFmpeg bundled** — no separate installation needed
-- **13 built-in themes** — Steam Dark, Cyberpunk, Neon Blue, Dracula, Nord, Gruvbox, Catppuccin, and more
-- **Bilingual UI** — Chinese / English with `i18next`
-- **Privacy** — no data collection, everything stored locally
+Steam 将录像存储为分段的 `.m4s` 文件（DASH 格式）。Steam 自带的导出功能虽然能用，但经常出现画面模糊和卡顿。RainySteamRecord 使用 FFmpeg 将这些录像转换为清晰流畅的 `.mp4` 文件，无画面瑕疵、无时长限制。
 
 ---
 
-## Tech Stack
+## 功能特性
 
-| Layer | Technology |
-|-------|-----------|
-| Desktop shell | Tauri 2 (Rust) |
-| Backend core | Node.js sidecar (stdio JSON-RPC) |
-| FFmpeg | `ffmpeg-static` (bundled binary) |
-| Frontend | React 19 + TypeScript + Vite |
-| Styling | Tailwind CSS + shadcn/ui |
-| State | Zustand |
-| i18n | i18next |
+- **片段浏览器** — 缩略图网格展示，虚拟滚动、流畅动画、分页控制
+- **自动识别游戏名称** — 自动识别每个片段对应的游戏，包括非 Steam 游戏（模拟器、Epic 等）
+- **内置 FFmpeg** — 无需单独安装，开箱即用
+- **13 套内置主题** — Steam Dark、赛博朋克、霓虹蓝、Dracula、Nord、Gruvbox、Catppuccin 等
+- **中英双语界面** — 基于 i18next 的国际化支持
+- **隐私保护** — 不收集任何数据，所有内容本地存储
 
 ---
 
-## Development
+## 技术栈
 
-### Prerequisites
+| 层级 | 技术 |
+|------|------|
+| 桌面框架 | Tauri 2 (Rust) |
+| 后端核心 | Node.js sidecar（stdio JSON-RPC） |
+| FFmpeg | `ffmpeg-static`（内置二进制） |
+| 前端 | React 19 + TypeScript + Vite |
+| 样式 | Tailwind CSS + CSS 变量主题 |
+| 状态管理 | Zustand |
+| 国际化 | i18next |
+
+---
+
+## 开发
+
+### 前置要求
 
 - [Node.js](https://nodejs.org/) 20+
-- [Rust](https://rustup.rs/) (stable)
-- [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/)
+- [Rust](https://rustup.rs/)（stable 通道）
+- [Tauri 2 前置依赖](https://v2.tauri.app/start/prerequisites/)
 
-### Install & Run
+### 安装与运行
 
 ```bash
 git clone https://github.com/CATMIAOZHI/RainySteamRecord
@@ -52,28 +54,27 @@ npm install
 npm run tauri:dev
 ```
 
-### Scripts
+### 常用命令
 
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | Start Vite dev server (frontend only) |
-| `npm run tauri:dev` | Start Tauri + frontend in dev mode |
-| `npm run tauri:build` | Build production app |
-| `npm run node:dev` | Start Node sidecar standalone (debug) |
-| `npm run lint` | Run ESLint |
-| `npm run typecheck` | TypeScript type checking |
-| `npm run test` | Run Vitest tests |
-
----
-
-## License
-
-GPL-3.0. See [LICENSE](LICENSE).
-
-Portions of the Steam discovery logic (binary VDF parsing, non-Steam game
-appid CRC32 calculation) are based on [SteamClip](https://github.com/Nastas95/SteamClip)
-by Nastas95, licensed under GPL-3.0.
+| 命令 | 说明 |
+|------|------|
+| `npm run dev` | 启动 Vite 开发服务器（仅前端） |
+| `npm run tauri:dev` | 启动 Tauri + 前端开发模式 |
+| `npm run tauri:build` | 构建生产应用（Windows 安装包） |
+| `npm run node:dev` | 单独启动 Node sidecar（调试用） |
+| `npm run lint` | 运行 ESLint |
+| `npm run typecheck` | TypeScript 类型检查 |
+| `npm run test` | 运行 Vitest 测试 |
 
 ---
 
-*Developed for the PC gaming community.*
+## 许可证
+
+GPL-3.0，详见 [LICENSE](LICENSE)。
+
+部分 Steam 数据发现逻辑（二进制 VDF 解析、非 Steam 游戏 appid CRC32 计算）
+基于 [SteamClip](https://github.com/Nastas95/SteamClip)（作者 Nastas95，GPL-3.0 许可）。
+
+---
+
+*为 PC 游戏社区开发。*

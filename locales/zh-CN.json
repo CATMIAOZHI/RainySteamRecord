@@ -1,7 +1,8 @@
 {
   "app": {
     "title": "RainySteamRecord",
-    "subtitle": "Steam 录像查看与导出工具"
+    "subtitle": "Steam 录像查看与导出工具",
+    "sidecarEvents": "Sidecar 事件："
   },
   "common": {
     "convert": "转换片段",
