@@ -9,7 +9,7 @@ mod clip;
 mod update;
 
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::Emitter;
 
 pub struct AppState {
     pub config: Mutex<config::AppConfig>,
