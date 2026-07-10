@@ -5,7 +5,16 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use std::time::SystemTime;
+use tokio::sync::Semaphore;
+
+static THUMB_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(2));
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ClipsCacheEntry {
+    clips: Vec<ClipInfo>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClipInfo {
@@ -18,12 +27,54 @@ pub struct ClipInfo {
     pub media_type: String,
 }
 
+fn cache_file() -> PathBuf {
+    let local_appdata = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
+        std::env::var("USERPROFILE").unwrap_or_else(|_| "C:\\Users".to_string())
+    });
+    PathBuf::from(local_appdata)
+        .join("RainySteamRecord")
+        .join("clips_cache.json")
+}
+
+fn cache_key(userdata_path: &str, steam_id: &str, media_type: &str) -> String {
+    format!("{}|{}|{}", userdata_path, steam_id, media_type)
+}
+
+fn read_clips_cache() -> HashMap<String, ClipsCacheEntry> {
+    let path = cache_file();
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Ok(cache) = serde_json::from_str::<HashMap<String, ClipsCacheEntry>>(&content) {
+            return cache;
+        }
+    }
+    HashMap::new()
+}
+
+fn write_clips_cache(cache: &HashMap<String, ClipsCacheEntry>) {
+    let path = cache_file();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(content) = serde_json::to_string_pretty(cache) {
+        let _ = std::fs::write(&path, content);
+    }
+}
+
 pub fn list_clips(
     userdata_path: &str,
     steam_id: &str,
     media_type: &str,
     game_ids: &HashMap<String, String>,
+    use_cache: bool,
 ) -> Result<Vec<ClipInfo>, String> {
+    if use_cache {
+        let key = cache_key(userdata_path, steam_id, media_type);
+        let cache = read_clips_cache();
+        if let Some(entry) = cache.get(&key) {
+            return Ok(entry.clips.clone());
+        }
+    }
+
     let userdata_dir = Path::new(userdata_path).join(steam_id);
     let custom_path = crate::steam::get_custom_record_path(&userdata_dir.to_string_lossy());
 
@@ -41,7 +92,10 @@ pub fn list_clips(
                 if entry.path().is_dir() {
                     let name = entry.file_name().to_string_lossy().to_string();
                     if name.contains('_') {
-                        clip_folders.push((entry.path().to_string_lossy().to_string(), "manual".to_string()));
+                        clip_folders.push((
+                            entry.path().to_string_lossy().to_string(),
+                            "manual".to_string(),
+                        ));
                     }
                 }
             }
@@ -53,7 +107,10 @@ pub fn list_clips(
                 if entry.path().is_dir() {
                     let name = entry.file_name().to_string_lossy().to_string();
                     if name.contains('_') {
-                        video_folders.push((entry.path().to_string_lossy().to_string(), "background".to_string()));
+                        video_folders.push((
+                            entry.path().to_string_lossy().to_string(),
+                            "background".to_string(),
+                        ));
                     }
                 }
             }
@@ -66,7 +123,10 @@ pub fn list_clips(
                     if entry.path().is_dir() {
                         let name = entry.file_name().to_string_lossy().to_string();
                         if name.contains('_') {
-                            clip_folders.push((entry.path().to_string_lossy().to_string(), "manual".to_string()));
+                            clip_folders.push((
+                                entry.path().to_string_lossy().to_string(),
+                                "manual".to_string(),
+                            ));
                         }
                     }
                 }
@@ -80,7 +140,10 @@ pub fn list_clips(
                     if entry.path().is_dir() {
                         let name = entry.file_name().to_string_lossy().to_string();
                         if name.contains('_') {
-                            video_folders.push((entry.path().to_string_lossy().to_string(), "background".to_string()));
+                            video_folders.push((
+                                entry.path().to_string_lossy().to_string(),
+                                "background".to_string(),
+                            ));
                         }
                     }
                 }
@@ -89,50 +152,84 @@ pub fn list_clips(
     }
 
     let all_clips: Vec<(String, String)> = match media_type {
-        "all" => clip_folders.into_iter().chain(video_folders.into_iter()).collect(),
+        "all" => clip_folders
+            .into_iter()
+            .chain(video_folders.into_iter())
+            .collect(),
         "manual" => clip_folders,
         "background" => video_folders,
-        _ => clip_folders.into_iter().chain(video_folders.into_iter()).collect(),
+        _ => clip_folders
+            .into_iter()
+            .chain(video_folders.into_iter())
+            .collect(),
     };
 
-    let mut clips: Vec<ClipInfo> = all_clips.into_iter().map(|(folder, mt)| {
-        let folder_name = Path::new(&folder)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
-        let parts: Vec<&str> = folder_name.split('_').collect();
-        let game_id = if parts.len() > 1 { parts[1].to_string() } else { "Unknown".to_string() };
-        let game_name = game_ids.get(&game_id).cloned().unwrap_or_else(|| game_id.clone());
-        let datetime = if parts.len() >= 3 {
-            let dt_str = format!("{}{}", parts[parts.len() - 2], parts[parts.len() - 1]);
-            if dt_str.len() >= 14 {
-                Some(format!("{}-{}-{} {}:{}:{}",
-                    &dt_str[0..4], &dt_str[4..6], &dt_str[6..8],
-                    &dt_str[8..10], &dt_str[10..12], &dt_str[12..14]))
+    let mut clips: Vec<ClipInfo> = all_clips
+        .into_iter()
+        .map(|(folder, mt)| {
+            let folder_name = Path::new(&folder)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            let parts: Vec<&str> = folder_name.split('_').collect();
+            let game_id = if parts.len() > 1 {
+                parts[1].to_string()
+            } else {
+                "Unknown".to_string()
+            };
+            let game_name = game_ids
+                .get(&game_id)
+                .cloned()
+                .unwrap_or_else(|| game_id.clone());
+            let datetime = if parts.len() >= 3 {
+                let dt_str = format!("{}{}", parts[parts.len() - 2], parts[parts.len() - 1]);
+                if dt_str.len() >= 14 {
+                    Some(format!(
+                        "{}-{}-{} {}:{}:{}",
+                        &dt_str[0..4],
+                        &dt_str[4..6],
+                        &dt_str[6..8],
+                        &dt_str[8..10],
+                        &dt_str[10..12],
+                        &dt_str[12..14]
+                    ))
+                } else {
+                    None
+                }
             } else {
                 None
+            };
+            let duration = get_clip_duration(&folder).unwrap_or_else(|_| "?".to_string());
+            ClipInfo {
+                folder,
+                folder_name,
+                game_id,
+                game_name,
+                datetime,
+                duration,
+                media_type: mt,
             }
-        } else {
-            None
-        };
-        let duration = get_clip_duration(&folder).unwrap_or_else(|_| "?".to_string());
-        ClipInfo {
-            folder,
-            folder_name,
-            game_id,
-            game_name,
-            datetime,
-            duration,
-            media_type: mt,
-        }
-    }).collect();
+        })
+        .collect();
 
     clips.sort_by(|a, b| {
         let dt_a = a.datetime.as_ref().map(|s| s.as_str()).unwrap_or("");
         let dt_b = b.datetime.as_ref().map(|s| s.as_str()).unwrap_or("");
         dt_b.cmp(dt_a)
     });
+
+    if use_cache {
+        let key = cache_key(userdata_path, steam_id, media_type);
+        let mut cache = read_clips_cache();
+        cache.insert(
+            key,
+            ClipsCacheEntry {
+                clips: clips.clone(),
+            },
+        );
+        write_clips_cache(&cache);
+    }
 
     Ok(clips)
 }
@@ -186,19 +283,36 @@ pub async fn generate_thumbnail(clip_folder: &str) -> Result<Option<String>, Str
     if thumbnail_path.exists() {
         return Ok(Some(thumbnail_path.to_string_lossy().to_string()));
     }
-    let session_mpd_files = crate::streaming::find_session_mpd_paths(clip_folder);
-    if let Some(first_mpd) = session_mpd_files.first() {
-        match crate::ffmpeg::extract_first_frame(&first_mpd.to_string_lossy(), &thumbnail_path.to_string_lossy()) {
-            Ok(_) => {
-                if thumbnail_path.exists() {
-                    return Ok(Some(thumbnail_path.to_string_lossy().to_string()));
-                }
-            }
-            Err(_) => {}
+    let _permit = THUMB_SEMAPHORE.acquire().await.map_err(|e| e.to_string())?;
+    let clip_folder = clip_folder.to_string();
+    tokio::task::spawn_blocking(move || {
+        let thumbnail_path = Path::new(&clip_folder).join("thumbnail.jpg");
+        if thumbnail_path.exists() {
+            return Ok(Some(thumbnail_path.to_string_lossy().to_string()));
         }
-    }
-    Ok(None)
+        let session_mpd_files = crate::streaming::find_session_mpd_paths(&clip_folder);
+        if let Some(first_mpd) = session_mpd_files.first() {
+            match crate::ffmpeg::extract_first_frame(
+                &first_mpd.to_string_lossy(),
+                &thumbnail_path.to_string_lossy(),
+            ) {
+                Ok(_) => {
+                    if thumbnail_path.exists() {
+                        return Ok(Some(thumbnail_path.to_string_lossy().to_string()));
+                    }
+                }
+                Err(_) => {}
+            }
+        }
+        Ok(None)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
-fn _unused() -> SystemTime { SystemTime::now() }
-fn _unused2() -> PathBuf { PathBuf::new() }
+fn _unused() -> SystemTime {
+    SystemTime::now()
+}
+fn _unused2() -> PathBuf {
+    PathBuf::new()
+}

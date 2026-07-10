@@ -8,6 +8,19 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+fn create_command(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
+
 fn ffmpeg_path() -> Result<String, String> {
     if let Ok(exe_dir) = std::env::current_exe() {
         if let Some(parent) = exe_dir.parent() {
@@ -36,7 +49,7 @@ fn ffmpeg_path() -> Result<String, String> {
     if dev_local.exists() {
         return Ok(dev_local.to_string_lossy().to_string());
     }
-    let which = Command::new("where").arg("ffmpeg").output();
+    let which = create_command("where").arg("ffmpeg").output();
     if let Ok(output) = which {
         if output.status.success() {
             let s = String::from_utf8_lossy(&output.stdout);
@@ -64,20 +77,31 @@ fn concat_init_and_chunks(data_dir: &Path, stream_num: u32) -> Result<PathBuf, S
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
             if name.starts_with(&format!("chunk-stream{}-", stream_num))
-                && crate::streaming::segment_number(&name).is_some() {
+                && crate::streaming::segment_number(&name).is_some()
+            {
                 chunks.push(entry.path());
             }
         }
     }
-    chunks.sort_by(|a, b| crate::streaming::segment_sort(
-        &a.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
-        &b.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
-    ));
+    chunks.sort_by(|a, b| {
+        crate::streaming::segment_sort(
+            &a.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            &b.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default(),
+        )
+    });
     if chunks.is_empty() {
         return Err(format!("No chunk files for stream{}", stream_num));
     }
     let temp_dir = std::env::temp_dir();
-    let temp_file = temp_dir.join(format!("rainy_stream_{}_{}.mp4", stream_num, uuid::Uuid::new_v4()));
+    let temp_file = temp_dir.join(format!(
+        "rainy_stream_{}_{}.mp4",
+        stream_num,
+        uuid::Uuid::new_v4()
+    ));
     let mut file = fs::File::create(&temp_file).map_err(|e| e.to_string())?;
     let init_data = fs::read(&init_file).map_err(|e| e.to_string())?;
     file.write_all(&init_data).map_err(|e| e.to_string())?;
@@ -92,16 +116,21 @@ fn concat_init_and_chunks(data_dir: &Path, stream_num: u32) -> Result<PathBuf, S
 fn concatenate_media_files(media_paths: &[PathBuf], is_video: bool) -> Result<PathBuf, String> {
     let ffmpeg = ffmpeg_path()?;
     let temp_dir = std::env::temp_dir();
-    let output_file = temp_dir.join(format!("rainy_concat_{}_{}.mp4",
+    let output_file = temp_dir.join(format!(
+        "rainy_concat_{}_{}.mp4",
         if is_video { "video" } else { "audio" },
-        uuid::Uuid::new_v4()));
+        uuid::Uuid::new_v4()
+    ));
     let list_file = temp_dir.join(format!("rainy_list_{}.txt", uuid::Uuid::new_v4()));
     let mut list_content = String::new();
     for path in media_paths {
-        list_content.push_str(&format!("file '{}'\n", path.to_string_lossy().replace('\\', "/")));
+        list_content.push_str(&format!(
+            "file '{}'\n",
+            path.to_string_lossy().replace('\\', "/")
+        ));
     }
     fs::write(&list_file, &list_content).map_err(|e| e.to_string())?;
-    let mut cmd = Command::new(&ffmpeg);
+    let mut cmd = create_command(&ffmpeg);
     cmd.args(&["-f", "concat", "-safe", "0", "-i"])
         .arg(&list_file)
         .args(&["-c", "copy"]);
@@ -114,24 +143,35 @@ fn concatenate_media_files(media_paths: &[PathBuf], is_video: bool) -> Result<Pa
     let result = cmd.output().map_err(|e| e.to_string())?;
     let _ = fs::remove_file(&list_file);
     if !result.status.success() {
-        return Err(format!("FFmpeg concat failed: {}", String::from_utf8_lossy(&result.stderr)));
+        return Err(format!(
+            "FFmpeg concat failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        ));
     }
     Ok(output_file)
 }
 
-fn generate_output_filename(clip_folder: &str, game_ids: &HashMap<String, String>) -> Result<String, String> {
+fn generate_output_filename(
+    clip_folder: &str,
+    game_ids: &HashMap<String, String>,
+) -> Result<String, String> {
     let folder_name = Path::new(clip_folder)
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("Unknown");
     let parts: Vec<&str> = folder_name.split('_').collect();
-    let game_id = if parts.len() > 1 { parts[1] } else { "UnknownGame" };
+    let game_id = if parts.len() > 1 {
+        parts[1]
+    } else {
+        "UnknownGame"
+    };
     let game_name = game_ids.get(game_id).map(|s| s.as_str()).unwrap_or(game_id);
     let sanitized = sanitize_filename::sanitize(game_name);
     let formatted_date = if parts.len() >= 3 {
         let datetime_str = format!("{}{}", parts[parts.len() - 2], parts[parts.len() - 1]);
         if datetime_str.len() >= 14 {
-            format!("{}_{}_{}_{}-{}-{}",
+            format!(
+                "{}_{}_{}_{}-{}-{}",
                 &datetime_str[0..4],
                 &datetime_str[4..6],
                 &datetime_str[6..8],
@@ -154,8 +194,14 @@ fn get_unique_filename(export_dir: &str, filename: &str) -> String {
     if !full_path.exists() {
         return full_path.to_string_lossy().to_string();
     }
-    let stem = Path::new(filename).file_stem().and_then(|s| s.to_str()).unwrap_or("output");
-    let ext = Path::new(filename).extension().and_then(|s| s.to_str()).unwrap_or("mp4");
+    let stem = Path::new(filename)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("output");
+    let ext = Path::new(filename)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("mp4");
     for i in 1..1000 {
         let new_name = format!("{}_{}.{}", stem, i, ext);
         let new_path = Path::new(export_dir).join(&new_name);
@@ -183,7 +229,7 @@ fn merge_clip_to_file(clip_folder: &str, output_file: &Path) -> Result<Vec<PathB
     let concatenated_video = concatenate_media_files(&temp_video_paths, true)?;
     let concatenated_audio = concatenate_media_files(&temp_audio_paths, false)?;
     let ffmpeg = ffmpeg_path()?;
-    let result = Command::new(&ffmpeg)
+    let result = create_command(&ffmpeg)
         .args(&["-i"])
         .arg(&concatenated_video)
         .args(&["-i"])
@@ -198,9 +244,14 @@ fn merge_clip_to_file(clip_folder: &str, output_file: &Path) -> Result<Vec<PathB
     all_temps.extend(temp_audio_paths);
     all_temps.push(concatenated_video.clone());
     all_temps.push(concatenated_audio.clone());
-    for p in &all_temps { let _ = fs::remove_file(p); }
+    for p in &all_temps {
+        let _ = fs::remove_file(p);
+    }
     if !result.status.success() {
-        return Err(format!("FFmpeg merge failed: {}", String::from_utf8_lossy(&result.stderr)));
+        return Err(format!(
+            "FFmpeg merge failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        ));
     }
     Ok(all_temps)
 }
@@ -223,7 +274,10 @@ pub async fn convert_single_clip(
     .map_err(|e| e.to_string())?
 }
 
-pub fn extract_first_frame(session_mpd_path: &str, output_thumbnail_path: &str) -> Result<(), String> {
+pub fn extract_first_frame(
+    session_mpd_path: &str,
+    output_thumbnail_path: &str,
+) -> Result<(), String> {
     let ffmpeg = ffmpeg_path()?;
     let data_dir = Path::new(session_mpd_path).parent().ok_or("Invalid path")?;
     let init_video = data_dir.join("init-stream0.m4s");
@@ -235,15 +289,22 @@ pub fn extract_first_frame(session_mpd_path: &str, output_thumbnail_path: &str) 
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
             if name.starts_with("chunk-stream0-")
-                && crate::streaming::segment_number(&name).is_some() {
+                && crate::streaming::segment_number(&name).is_some()
+            {
                 chunks.push(entry.path());
             }
         }
     }
-    chunks.sort_by(|a, b| crate::streaming::segment_sort(
-        &a.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
-        &b.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
-    ));
+    chunks.sort_by(|a, b| {
+        crate::streaming::segment_sort(
+            &a.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            &b.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default(),
+        )
+    });
     if chunks.is_empty() {
         return Err("No chunk files".to_string());
     }
@@ -256,7 +317,7 @@ pub fn extract_first_frame(session_mpd_path: &str, output_thumbnail_path: &str) 
         let chunk_data = fs::read(&chunks[0]).map_err(|e| e.to_string())?;
         file.write_all(&chunk_data).map_err(|e| e.to_string())?;
     }
-    let result = Command::new(&ffmpeg)
+    let result = create_command(&ffmpeg)
         .args(&["-y", "-ss", "00:00:00.000"])
         .arg(&temp_video)
         .args(&["-vframes", "1", "-q:v", "2"])

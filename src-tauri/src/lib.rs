@@ -61,21 +61,29 @@ fn list_steam_ids(userdata_path: String) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-fn list_clips(
+async fn list_clips(
     userdata_path: String,
     steam_id: String,
     media_type: String,
+    use_cache: Option<bool>,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<clip::ClipInfo>, String> {
-    let game_ids = state.game_ids.lock().map_err(|e| e.to_string())?;
-    let game_ids_map: std::collections::HashMap<String, String> = game_ids.clone();
-    drop(game_ids);
-    Ok(clip::list_clips(
-        &userdata_path,
-        &steam_id,
-        &media_type,
-        &game_ids_map,
-    )?)
+    let game_ids_map = {
+        let game_ids = state.game_ids.lock().map_err(|e| e.to_string())?;
+        game_ids.clone()
+    };
+    let use_cache = use_cache.unwrap_or(true);
+    tokio::task::spawn_blocking(move || {
+        clip::list_clips(
+            &userdata_path,
+            &steam_id,
+            &media_type,
+            &game_ids_map,
+            use_cache,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -237,10 +245,22 @@ async fn check_for_updates() -> Result<update::ReleaseInfo, String> {
 
 #[tauri::command]
 fn open_folder(path: String) -> Result<(), String> {
-    std::process::Command::new("explorer")
-        .arg(&path)
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("explorer")
+            .arg(&path)
+            .creation_flags(0x08000000)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 

@@ -308,25 +308,34 @@ pub async fn fetch_game_names_batch(
     existing: &HashMap<String, String>,
 ) -> HashMap<String, String> {
     let mut result = existing.clone();
+    let to_fetch: Vec<String> = game_ids
+        .iter()
+        .filter(|id| !result.contains_key(*id) || result.get(*id) == Some(id))
+        .filter(|id| id.chars().all(|c| c.is_ascii_digit()))
+        .cloned()
+        .collect();
+    if to_fetch.is_empty() {
+        return result;
+    }
     let client = reqwest::Client::builder()
         .user_agent("RainySteamRecord/0.1.1")
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
-    for game_id in game_ids {
-        if result.contains_key(game_id) {
-            continue;
-        }
-        if !game_id.chars().all(|c| c.is_ascii_digit()) {
-            continue;
-        }
-        let url = format!(
-            "https://store.steampowered.com/api/appdetails?appids={}&filters=basic",
-            game_id
-        );
-        if let Ok(resp) = client.get(&url).send().await {
-            if let Ok(json) = resp.json::<serde_json::Value>().await {
-                if let Some(data) = json.get(game_id.as_str()) {
+    const CONCURRENCY: usize = 4;
+    for chunk in to_fetch.chunks(CONCURRENCY) {
+        let mut tasks = Vec::new();
+        for game_id in chunk {
+            let id = game_id.clone();
+            let client = client.clone();
+            tasks.push(tokio::spawn(async move {
+                let url = format!(
+                    "https://store.steampowered.com/api/appdetails?appids={}&filters=basic",
+                    id
+                );
+                let resp = client.get(&url).send().await?;
+                let json: serde_json::Value = resp.json().await?;
+                if let Some(data) = json.get(&id) {
                     if data
                         .get("success")
                         .and_then(|s| s.as_bool())
@@ -337,13 +346,20 @@ pub async fn fetch_game_names_batch(
                             .and_then(|d| d.get("name"))
                             .and_then(|n| n.as_str())
                         {
-                            result.insert(game_id.clone(), name.to_string());
+                            return Ok::<(String, String), Box<dyn std::error::Error + Send + Sync>>(
+                                (id, name.to_string()),
+                            );
                         }
                     }
                 }
+                Ok((id.clone(), id))
+            }));
+        }
+        for task in tasks {
+            if let Ok(Ok((id, name))) = task.await {
+                result.insert(id, name);
             }
         }
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     }
     result
 }

@@ -50,8 +50,8 @@ export const tauriBridge = {
   findSteamUserdata: () => invoke<string | null>("find_steam_userdata"),
   validateUserdata: (folder: string) => invoke<boolean>("validate_userdata", { folder }),
   listSteamIds: (userdataPath: string) => invoke<string[]>("list_steam_ids", { userdataPath }),
-  listClips: (userdataPath: string, steamId: string, mediaType: string) =>
-    invoke<ClipInfo[]>("list_clips", { userdataPath, steamId, mediaType }),
+  listClips: (userdataPath: string, steamId: string, mediaType: string, useCache?: boolean) =>
+    invoke<ClipInfo[]>("list_clips", { userdataPath, steamId, mediaType, useCache }),
   getClipDuration: (clipFolder: string) => invoke<string>("get_clip_duration", { clipFolder }),
   generateThumbnail: (clipFolder: string) => invoke<string | null>("generate_thumbnail", { clipFolder }),
   preparePreview: (clipFolder: string) => invoke<string>("prepare_preview", { clipFolder }),

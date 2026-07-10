@@ -85,9 +85,13 @@ export const useStore = create<AppState>((set, get) => ({
     if (!config?.userdata_path || !selectedSteamId) return;
     set({ loading: true });
     try {
-      const clips = await tauriBridge.listClips(config.userdata_path, selectedSteamId, selectedMediaType);
+      const clips = await tauriBridge.listClips(config.userdata_path, selectedSteamId, selectedMediaType, true);
       set({ clips, loading: false, clipIndex: 0 });
-      const unknownIds = [...new Set(clips.map((c) => c.game_id))].filter(
+      const freshClips = await tauriBridge.listClips(config.userdata_path, selectedSteamId, selectedMediaType, false);
+      if (freshClips.length !== clips.length || JSON.stringify(freshClips.map((c) => c.folder).sort()) !== JSON.stringify(clips.map((c) => c.folder).sort())) {
+        set({ clips: freshClips, clipIndex: 0 });
+      }
+      const unknownIds = [...new Set(freshClips.map((c) => c.game_id))].filter(
         (id) => !gameIds[id] || gameIds[id] === id
       );
       if (unknownIds.length > 0) {
