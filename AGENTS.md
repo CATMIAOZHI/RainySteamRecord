@@ -35,9 +35,9 @@ All backend logic is in Rust (no Node sidecar). Tauri commands handle everything
 |--------|------|-------------|
 | config | `config.rs` | JSON config + GameIDs.json in `%LOCALAPPDATA%\RainySteamRecord\` |
 | steam | `steam.rs` | Steam discovery, binary VDF parser, non-Steam CRC32 appid, Steam API |
-| ffmpeg | `ffmpeg.rs` | m4s concat → mp4, natural sort, thumbnail extraction, FFmpeg fallback preview |
+| ffmpeg | `ffmpeg.rs` | m4s concat → mp4, natural sort, thumbnail extraction, FFmpeg fallback preview, all subprocesses use `CREATE_NO_WINDOW` |
 | streaming | `streaming.rs` | MSE streaming preview: session.mpd parsing, codec/duration extraction, segment byte reading |
-| clip | `clip.rs` | Clip scanning, duration parsing (ISO 8601), thumbnail generation |
+| clip | `clip.rs` | Clip scanning, duration parsing (ISO 8601), thumbnail generation (Semaphore-limited), file cache (`clips_cache.json`) |
 | update | `update.rs` | GitHub release check |
 
 ### Key Rust Functions
@@ -57,7 +57,7 @@ All backend logic is in Rust (no Node sidecar). Tauri commands handle everything
 |-----------|------|-------------|
 | TitleBar | `components/TitleBar.tsx` | Frameless window controls (minimize/close) |
 | FilterBar | `components/FilterBar.tsx` | SteamID / Game / Media type selects |
-| ClipGrid | `components/ClipGrid.tsx` | 3-column grid, pagination, manages preview state |
+| ClipGrid | `components/ClipGrid.tsx` | Auto-fill responsive grid, pagination, manages preview state |
 | ClipCard | `components/ClipCard.tsx` | Thumbnail card, single-click select (250ms timer), double-click preview |
 | VideoPreviewDialog | `components/VideoPreviewDialog.tsx` | MSE player with seekable random access + FFmpeg fallback, ESC to close, progressive chunk loading |
 | BottomBar | `components/BottomBar.tsx` | Pagination + Convert/ExportAll/Clear buttons + progress bar |
@@ -81,26 +81,27 @@ All backend logic is in Rust (no Node sidecar). Tauri commands handle everything
 - `preparePreview(clipFolder)` → FFmpeg concat+mux → temp mp4 → `convertFileSrc()` → `<video src>`
 - `cleanupPreview(path)` called on dialog close to delete temp file
 
-### Tauri Commands (21 total)
+### Tauri Commands (22 total)
 
 | Command | Type | Purpose |
 |---------|------|---------|
 | `get_config` / `save_config` | sync | App configuration |
 | `find_steam_userdata` / `validate_userdata` / `list_steam_ids` | sync | Steam discovery |
-| `list_clips` | sync | Scan clip folders |
+| `list_clips` | async (spawn_blocking) | Scan clip folders, with file cache support |
 | `get_clip_duration` | sync | Parse ISO 8601 duration from MPD |
-| `generate_thumbnail` | async | Extract first frame via FFmpeg |
+| `generate_thumbnail` | async (Semaphore 2 + spawn_blocking) | Extract first frame via FFmpeg, cached to `thumbnail.jpg` |
 | `get_clip_stream_info` | sync | Parse MPD for MSE streaming |
 | `read_segment_bytes` | sync | Read m4s file as raw bytes |
 | `prepare_preview` | async (spawn_blocking) | FFmpeg concat → temp mp4 (fallback) |
 | `cleanup_preview` | sync | Delete temp preview file |
 | `get_game_ids` / `save_game_ids` | sync | Game name mapping |
-| `fetch_game_name` | async | Steam API lookup |
+| `fetch_game_name` | async | Steam API lookup (single) |
+| `fetch_game_names_batch` | async | Steam API lookup (4-concurrent batch) |
 | `merge_non_steam_games` | async | Import non-Steam game names |
 | `convert_clips` | async | Batch export with progress events |
 | `cancel_conversion` | sync | Cancel ongoing export |
 | `check_for_updates` | async | GitHub release check |
-| `open_folder` / `get_config_dir` | sync | Utilities |
+| `open_folder` / `get_config_dir` | sync | Utilities (`open_folder` uses `CREATE_NO_WINDOW`) |
 
 ## Steam Recording File Structure
 
@@ -166,6 +167,7 @@ In `ffmpeg_path()`:
 - **MSVC Build Tools**: Installed (VS 2022 Build Tools, MSVC 14.44, Windows SDK) — `cargo build`, `cargo test`, `tauri:dev`, `tauri:build` all work locally
 - **npm**: requires `--legacy-peer-deps` (eslint peer dependency conflict)
 - **Tauri `protocol-asset` feature**: enabled in `Cargo.toml` (required by `assetProtocol` scope in `tauri.conf.json`)
+- **NSIS/WiX language**: Chinese (`SimpChinese` / `zh-CN`) configured in `tauri.conf.json`
 
 ## Conventions
 
@@ -173,6 +175,7 @@ In `ffmpeg_path()`:
 - **No emojis** in code or commits unless requested
 - **Rainy style**: pink/sakura color scheme is default theme
 - **Commit messages**: concise, descriptive
+- **All `std::process::Command`** on Windows must use `CREATE_NO_WINDOW` (`0x08000000`) via `creation_flags()` to avoid flashing console windows
 - **Run lint + typecheck** before considering a task complete
 - **README style**: Rainy family format with 🐱, 🌸 emojis, feature tables, architecture diagrams
 

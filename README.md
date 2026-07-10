@@ -17,7 +17,7 @@
 | 功能 | 说明 |
 |------|------|
 | 🎬 **即时预览** | 双击片段卡片直接播放，基于 MSE 流式喂入 fMP4 分段，首帧 ~100ms，支持进度条拖拽跳转，无需等待转换 |
-| 🖼️ **缩略图网格** | 自动提取首帧缩略图，3 列卡片网格，分页浏览，流畅动画 |
+| 🖼️ **缩略图网格** | 自动提取首帧缩略图，自适应卡片网格，分页浏览，流畅动画 |
 | 🎮 **自动识别游戏名** | 自动识别每个片段对应的游戏，包括非 Steam 游戏（模拟器、Epic 等），通过 Steam API + CRC32 appid |
 | 📦 **批量导出** | 选中多个片段一键导出为 `.mp4`，FFmpeg `-c copy` 无损转换，自动重命名（游戏名_日期时间.mp4） |
 | 🎨 **14 套内置主题** | 雨晴（默认）、Steam Dark、赛博朋克、霓虹蓝、Dracula、Nord、Gruvbox、Catppuccin 等 |
@@ -91,18 +91,18 @@ MSE 不支持时（如 HEVC 编解码器在某些系统）自动回退到 FFmpeg
 RainySteamRecord/
 ├── src-tauri/
 │   └── src/
-│       ├── lib.rs          # Tauri 命令注册 (20+ commands)
+│       ├── lib.rs          # Tauri 命令注册 (22 commands)
 │       ├── config.rs       # 配置 + GameIDs 管理
 │       ├── steam.rs        # Steam 发现, VDF 解析, 非 Steam 游戏
 │       ├── ffmpeg.rs       # m4s concat → mp4, 缩略图提取, 预览后备
 │       ├── streaming.rs     # MSE 流式预览 (session.mpd 解析, 分段读取)
-│       ├── clip.rs          # 片段扫描, 时长解析, 缩略图生成
+│       ├── clip.rs          # 片段扫描, 时长解析, 缩略图生成, 文件缓存
 │       └── update.rs       # GitHub Release 更新检测
 ├── src/
 │   ├── components/
 │   │   ├── VideoPreviewDialog.tsx  # MSE 播放器 + FFmpeg 后备
 │   │   ├── ClipCard.tsx            # 缩略图卡片 (单击选中/双击预览)
-│   │   ├── ClipGrid.tsx            # 3 列网格 + 分页
+│   │   ├── ClipGrid.tsx            # 自适应网格 + 分页
 │   │   ├── FilterBar.tsx           # SteamID/游戏/类型筛选
 │   │   ├── BottomBar.tsx           # 导出/进度条
 │   │   ├── SettingsDialog.tsx      # 主题/语言/路径设置
