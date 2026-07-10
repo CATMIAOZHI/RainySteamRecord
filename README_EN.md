@@ -1,74 +1,172 @@
 # RainySteamRecord
 
-[![License](https://img.shields.io/badge/License-GPL--3.0-blue?style=for-the-badge)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Windows-blue?style=for-the-badge)](#)
-[![Tech](https://img.shields.io/badge/Tauri-2.x-orange?style=for-the-badge)](https://tauri.app)
+> *"Steam recordings, Rainy style~"* 🐱
 
-English | [中文](README.md)
+[![Release](https://github.com/CATMIAOZHI/RainySteamRecord/actions/workflows/release.yml/badge.svg)](https://github.com/CATMIAOZHI/RainySteamRecord/releases)
+[![Version](https://img.shields.io/github/v/release/CATMIAOZHI/RainySteamRecord?color=ff85a2)](https://github.com/CATMIAOZHI/RainySteamRecord/releases/latest)
+[![License](https://img.shields.io/badge/License-GPL--3.0-blue?color=ff85a2)](LICENSE)
 
-> A modern GUI tool to browse and export Steam game recordings (DASH `.m4s` → `.mp4`).
+A modern Windows desktop tool to browse and export Steam game recordings (DASH `.m4s` → `.mp4`). Sakura-themed UI, double-click instant preview, FFmpeg lossless conversion, 14 built-in themes.
 
-Steam stores recordings as segmented `.m4s` files (DASH format). The native export works, but often produces pixelation and stuttering. RainySteamRecord converts those recordings to clean `.mp4` files using FFmpeg, with no artifacts and no length limits.
-
----
-
-## Features
-
-- **Clip browser** — recordings displayed in a thumbnail grid with virtual scrolling, smooth animations, and page controls
-- **Automatic game names** — identifies the game for each clip automatically, including non-Steam games
-- **FFmpeg bundled** — no separate installation needed
-- **13 built-in themes** — Steam Dark, Cyberpunk, Neon Blue, Dracula, Nord, Gruvbox, Catppuccin, and more
-- **Bilingual UI** — Chinese / English with `i18next`
-- **Privacy** — no data collection, everything stored locally
+RainySteamRecord — the Rainy Family tools.
 
 ---
 
-## Tech Stack
+## 🌸 Features
+
+| Feature | Description |
+|---------|-------------|
+| 🎬 **Instant Preview** | Double-click a clip to play instantly via MSE streaming — fMP4 segments fed directly to SourceBuffer, first frame in ~100ms, no conversion waiting |
+| 🖼️ **Thumbnail Grid** | Auto-extracted first-frame thumbnails, 3-column card grid with pagination and smooth animations |
+| 🎮 **Auto Game Names** | Identifies the game for each clip automatically, including non-Steam games (emulators, Epic, etc.) via Steam API + CRC32 appid |
+| 📦 **Batch Export** | Select multiple clips and export as `.mp4` with FFmpeg `-c copy` lossless conversion, auto-named (GameName_DateTime.mp4) |
+| 🎨 **14 Built-in Themes** | Rainy (default), Steam Dark, Cyberpunk, Neon Blue, Dracula, Nord, Gruvbox, Catppuccin, and more |
+| 🌐 **Bilingual UI** | Chinese (default) / English via i18next |
+| 🔄 **Update Checker** | Checks for latest GitHub Release on startup |
+| 🔒 **Privacy** | No data collection, everything stored locally |
+
+---
+
+## 📥 Download
+
+Visit [Releases](https://github.com/CATMIAOZHI/RainySteamRecord/releases) for the latest builds.
+
+| Format | Description |
+|--------|-------------|
+| 📌 **NSIS Installer** (.exe) | Recommended |
+| 📦 **MSI Installer** (.msi) | Enterprise deployment |
+
+> FFmpeg is bundled — no separate installation needed~
+
+---
+
+## 🏗️ Architecture
+
+```
+┌──────────────────────────────────────────────────┐
+│                  React 19 + TypeScript            │
+│          (Tailwind CSS + 14 themes + Zustand)     │
+│                        │                          │
+│           invoke ──────┤──── listen (event)       │
+│                        ▼                          │
+│             Tauri 2 IPC Channel                   │
+│                        │                          │
+│     ┌──────────┬───────┴──┬──────────┐            │
+│     ▼          ▼          ▼          ▼            │
+│  config.rs  steam.rs   ffmpeg.rs  streaming.rs    │
+│  Config     Steam disc. Convert    MSE preview     │
+│     │          │          │          │            │
+│     ▼          ▼          ▼          ▼            │
+│  JSON cfg   VDF parse   FFmpeg     fMP4 segments   │
+│  GameIDs    CRC32      concat+mux  tauri::Response│
+└──────────────────────────────────────────────────┘
+```
+
+### Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
 | Desktop shell | Tauri 2 (Rust) |
-| Backend core | Node.js sidecar (stdio JSON-RPC) |
-| FFmpeg | `ffmpeg-static` (bundled binary) |
+| Backend | Pure Rust (no Node sidecar) |
+| FFmpeg | Bundled binary (CI-downloaded, packaged as Tauri resource) |
 | Frontend | React 19 + TypeScript + Vite |
-| Styling | Tailwind CSS + shadcn/ui |
+| Styling | Tailwind CSS + CSS variable themes |
 | State | Zustand |
 | i18n | i18next |
 
+### Video Preview Pipeline
+
+| Path | Method | First-Frame Latency |
+|------|--------|---------------------|
+| **MSE Streaming** (primary) | Read m4s segments → MediaSource SourceBuffer → `<video>` progressive playback | ~100ms |
+| **FFmpeg Convert** (fallback) | Concat m4s → temp mp4 → `convertFileSrc` playback | Seconds |
+
+Automatically falls back to FFmpeg when MSE is unsupported (e.g. HEVC codec on certain systems).
+
 ---
 
-## Development
+## 📁 Project Structure
+
+```
+RainySteamRecord/
+├── src-tauri/
+│   └── src/
+│       ├── lib.rs          # Tauri command registration (20+ commands)
+│       ├── config.rs       # Config + GameIDs management
+│       ├── steam.rs        # Steam discovery, VDF parser, non-Steam games
+│       ├── ffmpeg.rs       # m4s concat → mp4, thumbnail extraction, preview fallback
+│       ├── streaming.rs     # MSE streaming preview (session.mpd parse, segment read)
+│       ├── clip.rs          # Clip scanning, duration parsing, thumbnail generation
+│       └── update.rs       # GitHub Release update check
+├── src/
+│   ├── components/
+│   │   ├── VideoPreviewDialog.tsx  # MSE player + FFmpeg fallback
+│   │   ├── ClipCard.tsx            # Thumbnail card (click select / dbl-click preview)
+│   │   ├── ClipGrid.tsx            # 3-column grid + pagination
+│   │   ├── FilterBar.tsx           # SteamID/Game/Type filters
+│   │   ├── BottomBar.tsx           # Export/progress bar
+│   │   ├── SettingsDialog.tsx      # Theme/language/path settings
+│   │   ├── TitleBar.tsx            # Frameless window controls
+│   │   └── SteamVersionPicker.tsx  # First-run Steam locator
+│   ├── lib/
+│   │   ├── tauri-bridge.ts  # Typed invoke wrappers
+│   │   ├── theme.ts         # 14 theme management
+│   │   └── i18n.ts          # i18next config
+│   └── stores/
+│       └── app.ts           # Zustand global state
+├── locales/
+│   ├── zh-CN.json
+│   └── en-US.json
+└── .github/workflows/
+    └── release.yml          # CI: download FFmpeg → Tauri build → publish
+```
+
+---
+
+## 🚀 Development
 
 ### Prerequisites
 
 - [Node.js](https://nodejs.org/) 20+
 - [Rust](https://rustup.rs/) (stable)
 - [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/)
+- MSVC Build Tools (Windows)
 
 ### Install & Run
 
 ```bash
 git clone https://github.com/CATMIAOZHI/RainySteamRecord
 cd RainySteamRecord
-npm install
+npm install --legacy-peer-deps
 npm run tauri:dev
 ```
 
-### Scripts
+### Commands
 
 | Command | Description |
 |---------|-------------|
 | `npm run dev` | Start Vite dev server (frontend only) |
 | `npm run tauri:dev` | Start Tauri + frontend in dev mode |
-| `npm run tauri:build` | Build production app |
-| `npm run node:dev` | Start Node sidecar standalone (debug) |
+| `npm run tauri:build` | Build production app (NSIS + MSI) |
 | `npm run lint` | Run ESLint |
 | `npm run typecheck` | TypeScript type checking |
-| `npm run test` | Run Vitest tests |
+
+### FFmpeg Binary
+
+FFmpeg is not committed to git (138MB). For local dev, manually place at `src-tauri/binaries/ffmpeg.exe`. CI downloads automatically. Path resolution: exe dir → `CARGO_MANIFEST_DIR/binaries` → `%LOCALAPPDATA%\RainySteamRecord` → system PATH.
 
 ---
 
-## License
+## 🐱 About Rainy
+
+Rainy is a tool series featuring a sakura-pink color scheme, pursuing modern, clean, and smooth user experiences.
+
+- **Author**: CATMIAOZHI
+- **Repo**: https://github.com/CATMIAOZHI/RainySteamRecord
+
+---
+
+## 📄 License
 
 GPL-3.0. See [LICENSE](LICENSE).
 
@@ -78,4 +176,4 @@ by Nastas95, licensed under GPL-3.0.
 
 ---
 
-*Developed for the PC gaming community.*
+*Made with 🐾 paws by Rainy*
