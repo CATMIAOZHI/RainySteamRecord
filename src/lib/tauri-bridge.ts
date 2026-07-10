@@ -28,6 +28,8 @@ export type GameIds = Record<string, string>;
 
 export interface SessionStreamInfo {
   session_dir: string;
+  duration_seconds: number;
+  segment_duration_seconds: number;
   video_codec: string;
   audio_codec: string;
   video_init: string;
@@ -37,6 +39,7 @@ export interface SessionStreamInfo {
 }
 
 export interface ClipStreamInfo {
+  duration_seconds: number;
   sessions: SessionStreamInfo[];
 }
 

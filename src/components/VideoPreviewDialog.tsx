@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { tauriBridge, type ClipInfo, type ClipStreamInfo } from "../lib/tauri-bridge";
 
-const PRELOAD_AHEAD_SECONDS = 10;
-const CHUNKS_PER_BATCH = 3;
+const PRELOAD_AHEAD_SECONDS = 30;
+const CHUNKS_PER_BATCH = 5;
 
 interface FeedState {
   sessionIdx: number;
@@ -31,6 +31,39 @@ function createFeedState(): FeedState {
   };
 }
 
+function createFeedStateAt(info: ClipStreamInfo, time: number): FeedState {
+  const state = createFeedState();
+  let sessionStart = 0;
+  for (let index = 0; index < info.sessions.length; index++) {
+    const session = info.sessions[index];
+    const sessionEnd = sessionStart + session.duration_seconds;
+    if (time < sessionEnd || index === info.sessions.length - 1) {
+      const chunkIndex = Math.max(0, Math.floor((time - sessionStart) / session.segment_duration_seconds));
+      state.sessionIdx = index;
+      state.videoChunkIdx = Math.min(chunkIndex, Math.max(0, session.video_chunks.length - 1));
+      state.audioChunkIdx = Math.min(chunkIndex, Math.max(0, session.audio_chunks.length - 1));
+      return state;
+    }
+    sessionStart = sessionEnd;
+  }
+  return state;
+}
+
+function getBufferStart(info: ClipStreamInfo, state: FeedState) {
+  let start = 0;
+  for (let index = 0; index < state.sessionIdx; index++) {
+    start += info.sessions[index].duration_seconds;
+  }
+  return start + state.videoChunkIdx * info.sessions[state.sessionIdx].segment_duration_seconds;
+}
+
+function bufferedAt(video: HTMLVideoElement, time: number) {
+  for (let index = 0; index < video.buffered.length; index++) {
+    if (time >= video.buffered.start(index) && time <= video.buffered.end(index)) return true;
+  }
+  return false;
+}
+
 export default function VideoPreviewDialog({
   clip,
   onClose,
@@ -54,6 +87,8 @@ export default function VideoPreviewDialog({
   const mseFailureRef = useRef<(reason: string) => void>(() => {});
   const usingFallbackRef = useRef(false);
   const fallbackReadyRef = useRef(false);
+  const seekTargetRef = useRef<number | null>(null);
+  const restartingMseRef = useRef(false);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -244,16 +279,21 @@ export default function VideoPreviewDialog({
     void fallbackToFFmpeg(reason);
   };
 
-  const startMsePlayback = useCallback(async (info: ClipStreamInfo, generation: number) => {
+  const startMsePlayback = useCallback(async (
+    info: ClipStreamInfo,
+    generation: number,
+    bufferStart = 0,
+    seekTarget: number | null = null,
+  ) => {
     if (!window.MediaSource) throw new Error("MSE not supported");
 
-    const firstSession = info.sessions[0];
-    if (!firstSession) throw new Error("No stream sessions found");
-    const videoMime = `video/mp4; codecs="${firstSession.video_codec}"`;
-    const audioMime = `audio/mp4; codecs="${firstSession.audio_codec}"`;
+    const initialSession = info.sessions[feedStateRef.current.sessionIdx];
+    if (!initialSession) throw new Error("No stream sessions found");
+    const videoMime = `video/mp4; codecs="${initialSession.video_codec}"`;
+    const audioMime = `audio/mp4; codecs="${initialSession.audio_codec}"`;
 
     if (!MediaSource.isTypeSupported(videoMime) || !MediaSource.isTypeSupported(audioMime)) {
-      throw new Error(`Unsupported codecs: ${firstSession.video_codec}, ${firstSession.audio_codec}`);
+      throw new Error(`Unsupported codecs: ${initialSession.video_codec}, ${initialSession.audio_codec}`);
     }
 
     const ms = new MediaSource();
@@ -271,6 +311,9 @@ export default function VideoPreviewDialog({
         const aBuf = ms.addSourceBuffer(audioMime);
         vBuf.mode = "sequence";
         aBuf.mode = "sequence";
+        ms.duration = info.duration_seconds;
+        vBuf.timestampOffset = bufferStart;
+        aBuf.timestampOffset = bufferStart;
         videoBufferRef.current = vBuf;
         audioBufferRef.current = aBuf;
 
@@ -284,8 +327,8 @@ export default function VideoPreviewDialog({
         vBuf.addEventListener("abort", onBufferError);
         aBuf.addEventListener("abort", onBufferError);
 
-        const vInit = await tauriBridge.readSegmentBytes(firstSession.video_init);
-        const aInit = await tauriBridge.readSegmentBytes(firstSession.audio_init);
+        const vInit = await tauriBridge.readSegmentBytes(initialSession.video_init);
+        const aInit = await tauriBridge.readSegmentBytes(initialSession.audio_init);
         if (!activeRef.current || generation !== playbackGenerationRef.current || mediaSourceRef.current !== ms) return;
 
         const onVInitDone = () => {
@@ -302,6 +345,12 @@ export default function VideoPreviewDialog({
         if (mseFailedRef.current) return;
 
         setLoading(false);
+        if (seekTarget !== null) {
+          seekTargetRef.current = seekTarget;
+          video.currentTime = seekTarget;
+        } else {
+          restartingMseRef.current = false;
+        }
         video.play().catch(() => {});
       } catch (e) {
         if (mediaSourceRef.current === ms) fallbackToFFmpeg(String(e));
@@ -364,9 +413,44 @@ export default function VideoPreviewDialog({
 
   useEffect(() => {
     const video = videoRef.current;
+    if (!video || usingFallback) return;
+    const onSeeking = () => {
+      const info = streamInfoRef.current;
+      const target = video.currentTime;
+      if (!info || restartingMseRef.current || bufferedAt(video, target)) return;
+      const generation = ++playbackGenerationRef.current;
+      restartingMseRef.current = true;
+      seekTargetRef.current = target;
+      disposeMse();
+      const state = createFeedStateAt(info, target);
+      feedStateRef.current = state;
+      void startMsePlayback(info, generation, getBufferStart(info, state), target)
+        .catch((e) => fallbackToFFmpeg(String(e)));
+    };
+    const onProgress = () => {
+      const target = seekTargetRef.current;
+      if (target === null || !bufferedAt(video, target)) return;
+      seekTargetRef.current = null;
+      restartingMseRef.current = false;
+      video.currentTime = target;
+      video.play().catch(() => {});
+    };
+    video.addEventListener("seeking", onSeeking);
+    video.addEventListener("progress", onProgress);
+    video.addEventListener("canplay", onProgress);
+    return () => {
+      video.removeEventListener("seeking", onSeeking);
+      video.removeEventListener("progress", onProgress);
+      video.removeEventListener("canplay", onProgress);
+    };
+  }, [disposeMse, fallbackToFFmpeg, startMsePlayback, usingFallback]);
+
+  useEffect(() => {
+    const video = videoRef.current;
     if (!video) return;
     const onVideoError = () => {
       if (!activeRef.current) return;
+      if (restartingMseRef.current) return;
       const reason = video.error?.message || "Video playback error";
       if (usingFallbackRef.current) {
         if (!fallbackReadyRef.current) return;

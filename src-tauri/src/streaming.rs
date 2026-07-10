@@ -6,6 +6,8 @@ use tauri::ipc::Response;
 #[derive(Serialize)]
 pub struct SessionInfo {
     pub session_dir: String,
+    pub duration_seconds: f64,
+    pub segment_duration_seconds: f64,
     pub video_codec: String,
     pub audio_codec: String,
     pub video_init: String,
@@ -16,6 +18,7 @@ pub struct SessionInfo {
 
 #[derive(Serialize)]
 pub struct ClipStreamInfo {
+    pub duration_seconds: f64,
     pub sessions: Vec<SessionInfo>,
 }
 
@@ -49,7 +52,11 @@ pub fn find_session_mpd_paths(clip_folder: &str) -> Vec<PathBuf> {
                 let path = entry.path();
                 if path.is_dir() {
                     walk_dir(&path, files);
-                } else if path.file_name().map(|n| n == "session.mpd").unwrap_or(false) {
+                } else if path
+                    .file_name()
+                    .map(|n| n == "session.mpd")
+                    .unwrap_or(false)
+                {
                     files.push(path);
                 }
             }
@@ -99,6 +106,49 @@ fn extract_codec(mpd_content: &str, content_type: &str) -> Option<String> {
     None
 }
 
+fn extract_attribute(content: &str, name: &str) -> Option<String> {
+    let marker = format!("{}=\"", name);
+    let rest = content.split_once(&marker)?.1;
+    Some(rest.split_once('"')?.0.to_string())
+}
+
+fn parse_iso8601_duration(value: &str) -> f64 {
+    let mut total = 0.0;
+    let mut number = String::new();
+    for ch in value.strip_prefix("PT").unwrap_or(value).chars() {
+        if ch.is_ascii_digit() || ch == '.' {
+            number.push(ch);
+            continue;
+        }
+        if let Ok(value) = number.parse::<f64>() {
+            match ch {
+                'H' => total += value * 3600.0,
+                'M' => total += value * 60.0,
+                'S' => total += value,
+                _ => {}
+            }
+        }
+        number.clear();
+    }
+    total
+}
+
+fn extract_segment_duration(mpd_content: &str) -> f64 {
+    let segment_template = mpd_content
+        .split_once("<SegmentTemplate")
+        .and_then(|(_, rest)| rest.split_once('>'))
+        .map(|(tag, _)| tag)
+        .unwrap_or("");
+    let duration =
+        extract_attribute(segment_template, "duration").and_then(|value| value.parse::<f64>().ok());
+    let timescale = extract_attribute(segment_template, "timescale")
+        .and_then(|value| value.parse::<f64>().ok());
+    match (duration, timescale) {
+        (Some(duration), Some(timescale)) if timescale > 0.0 => duration / timescale,
+        _ => 3.0,
+    }
+}
+
 fn collect_chunks(session_dir: &Path, stream_num: u32) -> Vec<String> {
     let prefix = format!("chunk-stream{}-", stream_num);
     let mut chunks: Vec<PathBuf> = Vec::new();
@@ -110,11 +160,20 @@ fn collect_chunks(session_dir: &Path, stream_num: u32) -> Vec<String> {
             }
         }
     }
-    chunks.sort_by(|a, b| segment_sort(
-        &a.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
-        &b.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
-    ));
-    chunks.into_iter().map(|p| p.to_string_lossy().to_string()).collect()
+    chunks.sort_by(|a, b| {
+        segment_sort(
+            &a.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            &b.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default(),
+        )
+    });
+    chunks
+        .into_iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect()
 }
 
 pub fn get_clip_stream_info(clip_folder: &str) -> Result<ClipStreamInfo, String> {
@@ -123,20 +182,30 @@ pub fn get_clip_stream_info(clip_folder: &str) -> Result<ClipStreamInfo, String>
         return Err("No session.mpd files found".to_string());
     }
     let mut sessions = Vec::new();
+    let mut duration_seconds = 0.0;
     for dir in &session_dirs {
         let mpd_path = dir.join("session.mpd");
-        let mpd_content = fs::read_to_string(&mpd_path)
-            .map_err(|e| format!("Failed to read MPD: {}", e))?;
-        let video_codec = extract_codec(&mpd_content, "video")
-            .unwrap_or_else(|| "avc1.42E01E".to_string());
-        let audio_codec = extract_codec(&mpd_content, "audio")
-            .unwrap_or_else(|| "mp4a.40.2".to_string());
+        let mpd_content =
+            fs::read_to_string(&mpd_path).map_err(|e| format!("Failed to read MPD: {}", e))?;
+        let video_codec =
+            extract_codec(&mpd_content, "video").unwrap_or_else(|| "avc1.42E01E".to_string());
+        let audio_codec =
+            extract_codec(&mpd_content, "audio").unwrap_or_else(|| "mp4a.40.2".to_string());
+        let mut session_duration = extract_attribute(&mpd_content, "mediaPresentationDuration")
+            .map(|value| parse_iso8601_duration(&value))
+            .unwrap_or(0.0);
+        let segment_duration = extract_segment_duration(&mpd_content);
         let video_init = dir.join("init-stream0.m4s").to_string_lossy().to_string();
         let audio_init = dir.join("init-stream1.m4s").to_string_lossy().to_string();
         let video_chunks = collect_chunks(dir, 0);
         let audio_chunks = collect_chunks(dir, 1);
+        if session_duration <= 0.0 {
+            session_duration = video_chunks.len() as f64 * segment_duration;
+        }
         sessions.push(SessionInfo {
             session_dir: dir.to_string_lossy().to_string(),
+            duration_seconds: session_duration,
+            segment_duration_seconds: segment_duration,
             video_codec,
             audio_codec,
             video_init,
@@ -144,8 +213,12 @@ pub fn get_clip_stream_info(clip_folder: &str) -> Result<ClipStreamInfo, String>
             video_chunks,
             audio_chunks,
         });
+        duration_seconds += session_duration;
     }
-    Ok(ClipStreamInfo { sessions })
+    Ok(ClipStreamInfo {
+        duration_seconds,
+        sessions,
+    })
 }
 
 pub fn read_segment_bytes(file_path: &str) -> Result<Response, String> {
@@ -155,7 +228,18 @@ pub fn read_segment_bytes(file_path: &str) -> Result<Response, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{segment_number, segment_sort};
+    use super::{extract_segment_duration, parse_iso8601_duration, segment_number, segment_sort};
+
+    #[test]
+    fn parses_stream_timing() {
+        assert!((parse_iso8601_duration("PT16M25.95S") - 985.95).abs() < f64::EPSILON);
+        assert_eq!(
+            extract_segment_duration(
+                r#"<SegmentTemplate timescale="1000000" duration="3000000"/>"#
+            ),
+            3.0
+        );
+    }
 
     #[test]
     fn sorts_steam_segment_numbers() {
@@ -196,10 +280,13 @@ mod tests {
 
         names.sort_by(|a, b| segment_sort(a, b));
 
-        assert_eq!(names, vec![
-            "chunk-stream0-00001.m4s",
-            "chunk-stream0-00002.m4s",
-            "chunk-stream0-bad.m4s",
-        ]);
+        assert_eq!(
+            names,
+            vec![
+                "chunk-stream0-00001.m4s",
+                "chunk-stream0-00002.m4s",
+                "chunk-stream0-bad.m4s",
+            ]
+        );
     }
 }
