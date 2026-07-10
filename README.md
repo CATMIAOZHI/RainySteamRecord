@@ -1,7 +1,7 @@
 # RainySteamRecord
 
 [![License](https://img.shields.io/badge/License-GPL--3.0-blue?style=for-the-badge)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-green?style=for-the-badge)](#)
+[![Platform](https://img.shields.io/badge/Platform-Windows-blue?style=for-the-badge)](#)
 [![Tech](https://img.shields.io/badge/Tauri-2.x-orange?style=for-the-badge)](https://tauri.app)
 
 > A modern GUI tool to browse and export Steam game recordings (DASH `.m4s` → `.mp4`).
@@ -76,4 +76,4 @@ by Nastas95, licensed under GPL-3.0.
 
 ---
 
-*Developed for the Steam Deck and PC gaming community.*
+*Developed for the PC gaming community.*
