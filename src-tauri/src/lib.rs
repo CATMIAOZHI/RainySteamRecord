@@ -78,7 +78,16 @@ async fn generate_thumbnail(clip_folder: String) -> Result<Option<String>, Strin
 
 #[tauri::command]
 async fn prepare_preview(clip_folder: String) -> Result<String, String> {
-    Ok(ffmpeg::prepare_preview(&clip_folder).await?)
+    tokio::task::spawn_blocking(move || {
+        ffmpeg::prepare_preview(&clip_folder)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn cleanup_preview(preview_path: String) {
+    ffmpeg::cleanup_preview(&preview_path);
 }
 
 #[tauri::command]
@@ -209,6 +218,7 @@ pub fn run() {
             get_clip_duration,
             generate_thumbnail,
             prepare_preview,
+            cleanup_preview,
             get_game_ids,
             save_game_ids,
             fetch_game_name,

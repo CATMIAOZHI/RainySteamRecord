@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { tauriBridge, type ClipInfo } from "../lib/tauri-bridge";
 
@@ -14,14 +14,20 @@ export default function VideoPreviewDialog({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useState(() => {
+  useEffect(() => {
     let cancelled = false;
+    let tempPath: string | null = null;
     (async () => {
       try {
         setLoading(true);
-        const tempPath = await tauriBridge.preparePreview(clip.folder);
-        if (cancelled) return;
-        setVideoUrl(tauriBridge.toAssetUrl(tempPath));
+        setError(null);
+        const path = await tauriBridge.preparePreview(clip.folder);
+        if (cancelled) {
+          tauriBridge.cleanupPreview(path).catch(() => {});
+          return;
+        }
+        tempPath = path;
+        setVideoUrl(tauriBridge.toAssetUrl(path));
         setLoading(false);
       } catch (e) {
         if (!cancelled) {
@@ -32,8 +38,19 @@ export default function VideoPreviewDialog({
     })();
     return () => {
       cancelled = true;
+      if (tempPath) {
+        tauriBridge.cleanupPreview(tempPath).catch(() => {});
+      }
     };
-  });
+  }, [clip.folder]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   return (
     <div

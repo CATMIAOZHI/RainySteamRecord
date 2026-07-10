@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useStore } from "../stores/app";
 import { tauriBridge, type ClipInfo } from "../lib/tauri-bridge";
 
@@ -7,6 +7,26 @@ export default function ClipCard({ clip, onPreview }: { clip: ClipInfo; onPrevie
   const isSelected = selectedClips.has(clip.folder);
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
   const [thumbLoading, setThumbLoading] = useState(true);
+  const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleClick = () => {
+    if (clickTimer.current) {
+      clearTimeout(clickTimer.current);
+      clickTimer.current = null;
+      onPreview(clip);
+    } else {
+      clickTimer.current = setTimeout(() => {
+        clickTimer.current = null;
+        toggleClipSelection(clip.folder);
+      }, 250);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (clickTimer.current) clearTimeout(clickTimer.current);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -30,8 +50,7 @@ export default function ClipCard({ clip, onPreview }: { clip: ClipInfo; onPrevie
 
   return (
     <div
-      onClick={() => toggleClipSelection(clip.folder)}
-      onDoubleClick={() => onPreview(clip)}
+      onClick={handleClick}
       className="group relative cursor-pointer overflow-hidden rounded-xl border-2 bg-surface transition-all duration-200"
       style={{
         borderColor: isSelected ? "var(--accent)" : "var(--border)",
