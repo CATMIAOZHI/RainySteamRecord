@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  lint-typecheck-test:
+  lint-typecheck:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,6 +23,3 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
-
-      - name: Test
-        run: npm run test

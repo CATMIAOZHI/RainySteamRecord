@@ -2,62 +2,273 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Theme: Steam Dark (default) */
+/* ===== Rainy (default) ===== */
 :root {
+  --bg: #FFF0F5;
+  --bg-end: #FFD1DC;
+  --surface: #FFFFFF;
+  --surface-2: #FAF6F8;
+  --surface-hover: #FFB3C6;
+  --accent: #FF85A2;
+  --accent-hover: #FF6B8E;
+  --accent-soft: #FFB3C6;
+  --text: #3D2C35;
+  --text-muted: #7A6B72;
+  --border: #D9CFD3;
+  --success: #66BB6A;
+  --warning: #FFA726;
+  --danger: #E91E63;
+  --info: #64B5F6;
+}
+
+/* ===== Rainy Dark ===== */
+:root[data-theme="rainy-dark"] {
+  --bg: #1F1419;
+  --bg-end: #2A1F25;
+  --surface: #2A1F25;
+  --surface-2: #1F1419;
+  --surface-hover: #3D2A33;
+  --accent: #FFB3C6;
+  --accent-hover: #FF85A2;
+  --accent-soft: #FF6B8E;
+  --text: #EFE0E5;
+  --text-muted: #C9B8BE;
+  --border: #4D3A42;
+  --success: #66BB6A;
+  --warning: #FFA726;
+  --danger: #E91E63;
+  --info: #64B5F6;
+}
+
+/* ===== Steam Dark ===== */
+:root[data-theme="steam-dark"] {
   --bg: #1b2838;
+  --bg-end: #171a21;
   --surface: #171a21;
+  --surface-2: #1b2838;
   --surface-hover: #2a475e;
   --accent: #66c0f4;
   --accent-hover: #4a9fd8;
+  --accent-soft: #2a475e;
   --text: #c7d5e0;
   --text-muted: #8f98a0;
   --border: #2a475e;
+  --success: #66BB6A;
+  --warning: #FFA726;
+  --danger: #E91E63;
+  --info: #64B5F6;
 }
 
+/* ===== Steam Light ===== */
 :root[data-theme="steam-light"] {
-  --bg: #ffffff;
-  --surface: #f0f4f8;
+  --bg: #f0f2f5;
+  --bg-end: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f0f2f5;
   --surface-hover: #dbe7f0;
-  --accent: #1a9cdd;
-  --accent-hover: #1583bd;
-  --text: #2c3e50;
+  --accent: #2a475e;
+  --accent-hover: #1e3547;
+  --accent-soft: #e0e3e8;
+  --text: #1a1a1a;
   --text-muted: #6b7c8a;
-  --border: #dbe7f0;
+  --border: #c8c8c8;
+  --success: #66BB6A;
+  --warning: #FFA726;
+  --danger: #d9534f;
+  --info: #64B5F6;
 }
 
+/* ===== Nord ===== */
 :root[data-theme="nord"] {
-  --bg: #2e3440;
-  --surface: #3b4252;
-  --surface-hover: #434c5e;
-  --accent: #88c0d0;
-  --accent-hover: #81a1c1;
-  --text: #e5e9f0;
-  --text-muted: #81a1c1;
-  --border: #434c5e;
+  --bg: #2E3440;
+  --bg-end: #3B4252;
+  --surface: #3B4252;
+  --surface-2: #2E3440;
+  --surface-hover: #434C5E;
+  --accent: #88C0D0;
+  --accent-hover: #8FBCBB;
+  --accent-soft: #4C566A;
+  --text: #D8DEE9;
+  --text-muted: #81A1C1;
+  --border: #4C566A;
+  --success: #A3BE8C;
+  --warning: #EBCB8B;
+  --danger: #BF616A;
+  --info: #81A1C1;
 }
 
+/* ===== Dracula ===== */
 :root[data-theme="dracula"] {
   --bg: #282a36;
+  --bg-end: #44475a;
   --surface: #383a4e;
+  --surface-2: #282a36;
   --surface-hover: #44475a;
   --accent: #bd93f9;
   --accent-hover: #a878ff;
+  --accent-soft: #6272a4;
   --text: #f8f8f2;
   --text-muted: #6272a4;
   --border: #44475a;
+  --success: #50fa7b;
+  --warning: #f1fa8c;
+  --danger: #ff5555;
+  --info: #8be9fd;
 }
 
+/* ===== Modern Dark ===== */
 :root[data-theme="modern-dark"] {
   --bg: #0f0f0f;
+  --bg-end: #1e1e1e;
   --surface: #1e1e1e;
+  --surface-2: #0f0f0f;
   --surface-hover: #2a2a2a;
   --accent: #6366f1;
   --accent-hover: #818cf8;
+  --accent-soft: #2c2c2c;
   --text: #e5e5e5;
   --text-muted: #a3a3a3;
   --border: #2a2a2a;
+  --success: #66BB6A;
+  --warning: #FFA726;
+  --danger: #cf6679;
+  --info: #64B5F6;
 }
 
+/* ===== Cyberpunk ===== */
+:root[data-theme="cyberpunk"] {
+  --bg: #0b0c15;
+  --bg-end: #131420;
+  --surface: #131420;
+  --surface-2: #0b0c15;
+  --surface-hover: #1a1c2e;
+  --accent: #ff00ff;
+  --accent-hover: #d900d9;
+  --accent-soft: #00f3ff;
+  --text: #d0d0e0;
+  --text-muted: #555566;
+  --border: #00f3ff;
+  --success: #00ff7f;
+  --warning: #ffaa00;
+  --danger: #ff3366;
+  --info: #00f3ff;
+}
+
+/* ===== Neon Blue ===== */
+:root[data-theme="neon-blue"] {
+  --bg: #000000;
+  --bg-end: #000810;
+  --surface: #000810;
+  --surface-2: #000000;
+  --surface-hover: #001122;
+  --accent: #00ccff;
+  --accent-hover: #00aacc;
+  --accent-soft: #006688;
+  --text: #00ccff;
+  --text-muted: #004455;
+  --border: #006688;
+  --success: #00ff7f;
+  --warning: #ffaa00;
+  --danger: #ff3366;
+  --info: #00ccff;
+}
+
+/* ===== Gruvbox ===== */
+:root[data-theme="gruvbox"] {
+  --bg: #282828;
+  --bg-end: #32302f;
+  --surface: #3c3836;
+  --surface-2: #282828;
+  --surface-hover: #504945;
+  --accent: #fabd2f;
+  --accent-hover: #d7a91e;
+  --accent-soft: #665c54;
+  --text: #ebdbb2;
+  --text-muted: #928374;
+  --border: #504945;
+  --success: #b8bb26;
+  --warning: #fe8019;
+  --danger: #cc241d;
+  --info: #83a598;
+}
+
+/* ===== Catppuccin Mocha ===== */
+:root[data-theme="catppuccin-mocha"] {
+  --bg: #1e1e2e;
+  --bg-end: #181825;
+  --surface: #181825;
+  --surface-2: #1e1e2e;
+  --surface-hover: #313244;
+  --accent: #89b4fa;
+  --accent-hover: #74c7ec;
+  --accent-soft: #45475a;
+  --text: #cdd6f4;
+  --text-muted: #585b70;
+  --border: #313244;
+  --success: #a6e3a1;
+  --warning: #f9e2af;
+  --danger: #f38ba8;
+  --info: #89b4fa;
+}
+
+/* ===== Pip-Boy ===== */
+:root[data-theme="pip-boy"] {
+  --bg: #000000;
+  --bg-end: #001100;
+  --surface: #001100;
+  --surface-2: #000000;
+  --surface-hover: #002200;
+  --accent: #00ff00;
+  --accent-hover: #00dd00;
+  --accent-soft: #00aa00;
+  --text: #00ff00;
+  --text-muted: #005500;
+  --border: #00aa00;
+  --success: #00ff00;
+  --warning: #ffaa00;
+  --danger: #ff0000;
+  --info: #00ccff;
+}
+
+/* ===== CRT Amber ===== */
+:root[data-theme="crt-amber"] {
+  --bg: #0a0a0a;
+  --bg-end: #111100;
+  --surface: #111100;
+  --surface-2: #0a0a0a;
+  --surface-hover: #221800;
+  --accent: #ffb000;
+  --accent-hover: #e69e00;
+  --accent-soft: #886600;
+  --text: #ffb000;
+  --text-muted: #554400;
+  --border: #553300;
+  --success: #66BB6A;
+  --warning: #ffb000;
+  --danger: #ff4400;
+  --info: #ffcc00;
+}
+
+/* ===== High Contrast Light ===== */
+:root[data-theme="high-contrast"] {
+  --bg: #ffffff;
+  --bg-end: #f8f8f8;
+  --surface: #ffffff;
+  --surface-2: #f0f0f0;
+  --surface-hover: #e0e0e0;
+  --accent: #0000ee;
+  --accent-hover: #0000cc;
+  --accent-soft: #e0e0e0;
+  --text: #000000;
+  --text-muted: #808080;
+  --border: #000000;
+  --success: #00aa00;
+  --warning: #ffaa00;
+  --danger: #cc0000;
+  --info: #0066cc;
+}
+
+/* ===== Base styles ===== */
 * {
   margin: 0;
   padding: 0;
@@ -72,21 +283,21 @@ body,
 }
 
 body {
-  background-color: var(--bg);
+  background: linear-gradient(135deg, var(--bg) 0%, var(--bg-end) 100%);
   color: var(--text);
-  font-family:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
-    sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  transition: background 0.3s ease, color 0.3s ease;
 }
 
-/* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--surface);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: var(--border);
@@ -94,4 +305,10 @@ body {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--accent);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-muted);
+  opacity: 0.6;
 }

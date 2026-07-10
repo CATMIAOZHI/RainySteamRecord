@@ -1,4 +1,4 @@
-// RainySteamRecord — Tauri backend entry point
+// RainySteamRecord — Backend entry point
 // Copyright (C) 2026 CATMIAOZHI
 // Licensed under GPL-3.0.
 

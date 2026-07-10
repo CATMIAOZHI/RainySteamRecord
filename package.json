@@ -11,8 +11,6 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "node:dev": "tsx watch src-node/index.ts",
-    "node:build": "tsc -p tsconfig.node.json",
     "lint": "eslint .",
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run",

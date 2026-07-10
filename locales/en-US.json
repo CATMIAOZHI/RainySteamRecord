@@ -2,7 +2,7 @@
   "app": {
     "title": "RainySteamRecord",
     "subtitle": "Steam Recording Browser & Exporter",
-    "sidecarEvents": "Sidecar events:"
+    "firstRun": "Clips will be saved to your Desktop. You can change the export path in Settings."
   },
   "common": {
     "convert": "Convert Clips",
@@ -11,7 +11,14 @@
     "settings": "Settings",
     "exit": "Exit",
     "previous": "Previous",
-    "next": "Next"
+    "next": "Next",
+    "close": "Close",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "apply": "Apply Changes",
+    "delete": "Delete",
+    "save": "Save",
+    "allGames": "All Games"
   },
   "filter": {
     "steamId": "Steam ID",
@@ -23,8 +30,48 @@
   },
   "conversion": {
     "processing": "Processing clip {{current}}/{{total}} - {{percent}}%",
-    "complete": "Conversion complete",
+    "complete": "All clips converted successfully",
+    "partialFail": "Some clips failed to convert",
     "failed": "Conversion failed",
-    "cancelled": "Cancelled"
+    "cancelled": "Cancelled",
+    "initializing": "Initializing conversion...",
+    "cancelConfirm": "Conversion is in progress. Are you sure you want to exit?"
+  },
+  "settings": {
+    "title": "Settings",
+    "appearance": "Appearance",
+    "theme": "Theme",
+    "general": "General Settings",
+    "openConfigFolder": "Open Config Folder",
+    "setExportPath": "Set Export Path",
+    "gameData": "Game Data",
+    "editGameNames": "Edit Game Names",
+    "updateGameIds": "Update Game IDs",
+    "appSettings": "Application",
+    "checkForUpdates": "Check for Updates",
+    "deleteConfig": "Delete Config Folder",
+    "version": "Version",
+    "language": "Language"
+  },
+  "steamVersion": {
+    "title": "Select Steam Version",
+    "question": "Which version of Steam are you using?",
+    "standard": "Standard",
+    "manual": "Manually select userdata folder",
+    "invalid": "Selected directory is not a valid userdata folder."
+  },
+  "messages": {
+    "noClips": "Clip folder is empty. Please record at least one clip before using.",
+    "noSteamFound": "Cannot find Steam userdata directory. Exiting.",
+    "deleteInvalidConfirm": "Found {{count}} invalid clips. Delete them?",
+    "exportPathSet": "Export path set to: {{path}}",
+    "exportPathInvalid": "Selected export directory is invalid, using default: {{path}}",
+    "gameIdsUpdated": "Game ID database updated successfully!",
+    "gameIdsUpToDate": "No update needed - database is already up to date.",
+    "gameNamesSaved": "Game names saved successfully.",
+    "updateAvailable": "New version {{version}} available",
+    "noUpdate": "You are using the latest version.",
+    "updateCheckFailed": "Failed to fetch latest version info.",
+    "configDeleted": "Config folder deleted.\nApplication will close."
   }
 }
