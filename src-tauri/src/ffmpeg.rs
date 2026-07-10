@@ -47,16 +47,6 @@ fn ffmpeg_path() -> Result<String, String> {
     Err("FFmpeg not found. Please install FFmpeg or bundle it.".to_string())
 }
 
-fn natural_sort(a: &str, b: &str) -> std::cmp::Ordering {
-    let an: Vec<&str> = a.split('-').collect();
-    let bn: Vec<&str> = b.split('-').collect();
-    let anum: u32 = an.iter().rev().find(|s| s.chars().all(|c| c.is_ascii_digit()))
-        .and_then(|s| s.parse().ok()).unwrap_or(0);
-    let bnum: u32 = bn.iter().rev().find(|s| s.chars().all(|c| c.is_ascii_digit()))
-        .and_then(|s| s.parse().ok()).unwrap_or(0);
-    anum.cmp(&bnum)
-}
-
 fn find_session_mpd_files(clip_folder: &str) -> Vec<String> {
     crate::streaming::find_session_mpd_paths(clip_folder)
         .into_iter()
@@ -73,12 +63,13 @@ fn concat_init_and_chunks(data_dir: &Path, stream_num: u32) -> Result<PathBuf, S
     if let Ok(entries) = fs::read_dir(data_dir) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with(&format!("chunk-stream{}-", stream_num)) && name.ends_with(".m4s") {
+            if name.starts_with(&format!("chunk-stream{}-", stream_num))
+                && crate::streaming::segment_number(&name).is_some() {
                 chunks.push(entry.path());
             }
         }
     }
-    chunks.sort_by(|a, b| natural_sort(
+    chunks.sort_by(|a, b| crate::streaming::segment_sort(
         &a.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
         &b.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
     ));
@@ -243,12 +234,13 @@ pub fn extract_first_frame(session_mpd_path: &str, output_thumbnail_path: &str) 
     if let Ok(entries) = fs::read_dir(data_dir) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with("chunk-stream0-") && name.ends_with(".m4s") {
+            if name.starts_with("chunk-stream0-")
+                && crate::streaming::segment_number(&name).is_some() {
                 chunks.push(entry.path());
             }
         }
     }
-    chunks.sort_by(|a, b| natural_sort(
+    chunks.sort_by(|a, b| crate::streaming::segment_sort(
         &a.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
         &b.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
     ));

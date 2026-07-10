@@ -19,14 +19,26 @@ pub struct ClipStreamInfo {
     pub sessions: Vec<SessionInfo>,
 }
 
-fn natural_sort(a: &str, b: &str) -> std::cmp::Ordering {
-    let an: Vec<&str> = a.split('-').collect();
-    let bn: Vec<&str> = b.split('-').collect();
-    let anum: u32 = an.iter().rev().find(|s| s.chars().all(|c| c.is_ascii_digit()))
-        .and_then(|s| s.parse().ok()).unwrap_or(0);
-    let bnum: u32 = bn.iter().rev().find(|s| s.chars().all(|c| c.is_ascii_digit()))
-        .and_then(|s| s.parse().ok()).unwrap_or(0);
-    anum.cmp(&bnum)
+pub(crate) fn segment_number(name: &str) -> Option<u32> {
+    let stem = name.strip_suffix(".m4s")?;
+    let (stream, number) = stem.rsplit_once('-')?;
+    let stream_number = stream.strip_prefix("chunk-stream")?;
+    if stream_number.is_empty() || !stream_number.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    if number.is_empty() || !number.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    number.parse().ok()
+}
+
+pub(crate) fn segment_sort(a: &str, b: &str) -> std::cmp::Ordering {
+    match (segment_number(a), segment_number(b)) {
+        (Some(a_number), Some(b_number)) => a_number.cmp(&b_number).then_with(|| a.cmp(b)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.cmp(b),
+    }
 }
 
 pub fn find_session_mpd_paths(clip_folder: &str) -> Vec<PathBuf> {
@@ -93,12 +105,12 @@ fn collect_chunks(session_dir: &Path, stream_num: u32) -> Vec<String> {
     if let Ok(entries) = fs::read_dir(session_dir) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with(&prefix) && name.ends_with(".m4s") {
+            if name.starts_with(&prefix) && segment_number(&name).is_some() {
                 chunks.push(entry.path());
             }
         }
     }
-    chunks.sort_by(|a, b| natural_sort(
+    chunks.sort_by(|a, b| segment_sort(
         &a.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
         &b.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
     ));
@@ -139,4 +151,55 @@ pub fn get_clip_stream_info(clip_folder: &str) -> Result<ClipStreamInfo, String>
 pub fn read_segment_bytes(file_path: &str) -> Result<Response, String> {
     let data = fs::read(file_path).map_err(|e| format!("Failed to read segment: {}", e))?;
     Ok(Response::new(data))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{segment_number, segment_sort};
+
+    #[test]
+    fn sorts_steam_segment_numbers() {
+        let mut names = vec![
+            "chunk-stream0-00010.m4s",
+            "chunk-stream0-00002.m4s",
+            "chunk-stream0-00001.m4s",
+        ];
+
+        names.sort_by(|a, b| segment_sort(a, b));
+
+        assert_eq!(
+            names,
+            vec![
+                "chunk-stream0-00001.m4s",
+                "chunk-stream0-00002.m4s",
+                "chunk-stream0-00010.m4s",
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_segment_names() {
+        assert_eq!(segment_number("chunk-stream0-00001.m4s"), Some(1));
+        assert_eq!(segment_number("chunk-stream0-bad.m4s"), None);
+        assert_eq!(segment_number("chunk-stream0--1.m4s"), None);
+        assert_eq!(segment_number("chunk-stream-00001.m4s"), None);
+        assert_eq!(segment_number("chunk-stream0-4294967296.m4s"), None);
+    }
+
+    #[test]
+    fn sorts_malformed_names_after_valid_segments() {
+        let mut names = vec![
+            "chunk-stream0-bad.m4s",
+            "chunk-stream0-00002.m4s",
+            "chunk-stream0-00001.m4s",
+        ];
+
+        names.sort_by(|a, b| segment_sort(a, b));
+
+        assert_eq!(names, vec![
+            "chunk-stream0-00001.m4s",
+            "chunk-stream0-00002.m4s",
+            "chunk-stream0-bad.m4s",
+        ]);
+    }
 }

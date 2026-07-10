@@ -46,11 +46,58 @@ export default function VideoPreviewDialog({
   const audioBufferRef = useRef<SourceBuffer | null>(null);
   const streamInfoRef = useRef<ClipStreamInfo | null>(null);
   const feedStateRef = useRef<FeedState>(createFeedState());
+  const activeRef = useRef(true);
+  const fallbackPathRef = useRef<string | null>(null);
+  const fallbackRequestRef = useRef(0);
+  const playbackGenerationRef = useRef(0);
+  const mseFailedRef = useRef(false);
+  const mseFailureRef = useRef<(reason: string) => void>(() => {});
+  const usingFallbackRef = useRef(false);
+  const fallbackReadyRef = useRef(false);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [usingFallback, setUsingFallback] = useState(false);
   const [fallbackUrl, setFallbackUrl] = useState<string | null>(null);
+
+  const disposeMse = useCallback(() => {
+    const ms = mediaSourceRef.current;
+    mediaSourceRef.current = null;
+    videoBufferRef.current = null;
+    audioBufferRef.current = null;
+    const state = feedStateRef.current;
+    state.videoDone = true;
+    state.videoQueue = [];
+    state.audioQueue = [];
+
+    const video = videoRef.current;
+    if (video) {
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    }
+    if (ms?.readyState === "open") {
+      try { ms.endOfStream(); } catch { /* ignore */ }
+    }
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
+  }, []);
+
+  const maybeEndMse = useCallback(() => {
+    const state = feedStateRef.current;
+    const ms = mediaSourceRef.current;
+    const videoBuffer = videoBufferRef.current;
+    const audioBuffer = audioBufferRef.current;
+    if (!state.videoDone || !ms || ms.readyState !== "open" || !videoBuffer || !audioBuffer) return;
+    if (state.videoQueue.length || state.audioQueue.length || videoBuffer.updating || audioBuffer.updating) return;
+    try {
+      ms.endOfStream();
+    } catch (e) {
+      mseFailureRef.current(String(e));
+    }
+  }, []);
 
   const tryAppend = useCallback((buffer: SourceBuffer, data: ArrayBuffer, isVideo: boolean) => {
     const state = feedStateRef.current;
@@ -63,9 +110,11 @@ export default function VideoPreviewDialog({
       if (isVideo) state.videoAppending = true;
       else state.audioAppending = true;
       buffer.appendBuffer(data);
-    } catch {
+    } catch (e) {
       if (isVideo) state.videoAppending = false;
       else state.audioAppending = false;
+      const currentBuffer = isVideo ? videoBufferRef.current : audioBufferRef.current;
+      if (currentBuffer === buffer) mseFailureRef.current(String(e));
     }
   }, []);
 
@@ -75,21 +124,26 @@ export default function VideoPreviewDialog({
     else state.audioAppending = false;
     if (buffer.updating) return;
     const queue = isVideo ? state.videoQueue : state.audioQueue;
-    if (queue.length === 0) return;
+    if (queue.length === 0) {
+      maybeEndMse();
+      return;
+    }
     const next = queue.shift()!;
     try {
       if (isVideo) state.videoAppending = true;
       else state.audioAppending = true;
       buffer.appendBuffer(next);
-    } catch {
+    } catch (e) {
       if (isVideo) state.videoAppending = false;
       else state.audioAppending = false;
+      const currentBuffer = isVideo ? videoBufferRef.current : audioBufferRef.current;
+      if (currentBuffer === buffer) mseFailureRef.current(String(e));
     }
-  }, []);
+  }, [maybeEndMse]);
 
-  const feedChunks = useCallback(async () => {
+  const feedChunks = useCallback(async (generation: number) => {
     const state = feedStateRef.current;
-    if (state.feeding || state.videoDone) return;
+    if (generation !== playbackGenerationRef.current || state.feeding || state.videoDone) return;
     state.feeding = true;
 
     try {
@@ -105,6 +159,15 @@ export default function VideoPreviewDialog({
         }
 
         if (state.videoChunkIdx >= session.video_chunks.length) {
+          if (state.audioChunkIdx < session.audio_chunks.length) {
+            const aPath = session.audio_chunks[state.audioChunkIdx];
+            const aData = await tauriBridge.readSegmentBytes(aPath);
+            if (!activeRef.current || generation !== playbackGenerationRef.current) return;
+            if (audioBufferRef.current) tryAppend(audioBufferRef.current, aData, false);
+            state.audioChunkIdx++;
+            fed++;
+            continue;
+          }
           if (state.sessionIdx < info.sessions.length - 1) {
             state.sessionIdx++;
             state.videoChunkIdx = 0;
@@ -112,6 +175,7 @@ export default function VideoPreviewDialog({
             session = info.sessions[state.sessionIdx];
             const vInit = await tauriBridge.readSegmentBytes(session.video_init);
             const aInit = await tauriBridge.readSegmentBytes(session.audio_init);
+            if (!activeRef.current || generation !== playbackGenerationRef.current) return;
             if (videoBufferRef.current) tryAppend(videoBufferRef.current, vInit, true);
             if (audioBufferRef.current) tryAppend(audioBufferRef.current, aInit, false);
             continue;
@@ -123,11 +187,13 @@ export default function VideoPreviewDialog({
 
         const vPath = session.video_chunks[state.videoChunkIdx];
         const vData = await tauriBridge.readSegmentBytes(vPath);
+        if (!activeRef.current || generation !== playbackGenerationRef.current) return;
         if (videoBufferRef.current) tryAppend(videoBufferRef.current, vData, true);
 
         if (state.audioChunkIdx < session.audio_chunks.length) {
           const aPath = session.audio_chunks[state.audioChunkIdx];
           const aData = await tauriBridge.readSegmentBytes(aPath);
+          if (!activeRef.current || generation !== playbackGenerationRef.current) return;
           if (audioBufferRef.current) tryAppend(audioBufferRef.current, aData, false);
           state.audioChunkIdx++;
         }
@@ -135,31 +201,71 @@ export default function VideoPreviewDialog({
         state.videoChunkIdx++;
         fed++;
       }
+    } catch (e) {
+      if (activeRef.current && generation === playbackGenerationRef.current) {
+        mseFailureRef.current(String(e));
+      }
     } finally {
       state.feeding = false;
+      if (generation === playbackGenerationRef.current) maybeEndMse();
     }
-  }, [tryAppend]);
+  }, [maybeEndMse, tryAppend]);
 
-  const startMsePlayback = useCallback(async (info: ClipStreamInfo) => {
+  const fallbackToFFmpeg = useCallback(async (reason: string) => {
+    if (!activeRef.current || mseFailedRef.current) return;
+    mseFailedRef.current = true;
+    console.warn(`MSE playback failed (${reason}), falling back to FFmpeg`);
+    const requestId = ++fallbackRequestRef.current;
+    playbackGenerationRef.current++;
+    usingFallbackRef.current = true;
+    fallbackReadyRef.current = false;
+    disposeMse();
+    setLoading(true);
+    setError(null);
+    setUsingFallback(true);
+    setFallbackUrl(null);
+    try {
+      const path = await tauriBridge.preparePreview(clip.folder);
+      if (!activeRef.current || requestId !== fallbackRequestRef.current) {
+        await tauriBridge.cleanupPreview(path);
+        return;
+      }
+      fallbackPathRef.current = path;
+      fallbackReadyRef.current = true;
+      setFallbackUrl(tauriBridge.toAssetUrl(path));
+    } catch (e) {
+      if (!activeRef.current || requestId !== fallbackRequestRef.current) return;
+      setError(String(e));
+      setLoading(false);
+    }
+  }, [clip.folder, disposeMse]);
+
+  mseFailureRef.current = (reason: string) => {
+    void fallbackToFFmpeg(reason);
+  };
+
+  const startMsePlayback = useCallback(async (info: ClipStreamInfo, generation: number) => {
     if (!window.MediaSource) throw new Error("MSE not supported");
 
     const firstSession = info.sessions[0];
+    if (!firstSession) throw new Error("No stream sessions found");
     const videoMime = `video/mp4; codecs="${firstSession.video_codec}"`;
-    const audioMime = `video/mp4; codecs="${firstSession.audio_codec}"`;
+    const audioMime = `audio/mp4; codecs="${firstSession.audio_codec}"`;
 
-    if (!MediaSource.isTypeSupported(videoMime)) {
-      throw new Error(`Unsupported codec: ${firstSession.video_codec}`);
+    if (!MediaSource.isTypeSupported(videoMime) || !MediaSource.isTypeSupported(audioMime)) {
+      throw new Error(`Unsupported codecs: ${firstSession.video_codec}, ${firstSession.audio_codec}`);
     }
 
     const ms = new MediaSource();
     mediaSourceRef.current = ms;
     const video = videoRef.current;
-    if (!video) return;
+    if (!video) throw new Error("Video element unavailable");
     const url = URL.createObjectURL(ms);
     objectUrlRef.current = url;
     video.src = url;
 
     ms.addEventListener("sourceopen", async () => {
+      if (mediaSourceRef.current !== ms) return;
       try {
         const vBuf = ms.addSourceBuffer(videoMime);
         const aBuf = ms.addSourceBuffer(audioMime);
@@ -170,81 +276,75 @@ export default function VideoPreviewDialog({
 
         vBuf.addEventListener("updateend", () => flushQueue(vBuf, true));
         aBuf.addEventListener("updateend", () => flushQueue(aBuf, false));
+        const onBufferError = () => {
+          if (mediaSourceRef.current === ms) mseFailureRef.current("SourceBuffer error");
+        };
+        vBuf.addEventListener("error", onBufferError);
+        aBuf.addEventListener("error", onBufferError);
+        vBuf.addEventListener("abort", onBufferError);
+        aBuf.addEventListener("abort", onBufferError);
 
         const vInit = await tauriBridge.readSegmentBytes(firstSession.video_init);
         const aInit = await tauriBridge.readSegmentBytes(firstSession.audio_init);
-
-        tryAppend(vBuf, vInit, true);
+        if (!activeRef.current || generation !== playbackGenerationRef.current || mediaSourceRef.current !== ms) return;
 
         const onVInitDone = () => {
           vBuf.removeEventListener("updateend", onVInitDone);
-          feedChunks();
+          if (generation === playbackGenerationRef.current && mediaSourceRef.current === ms) {
+            void feedChunks(generation);
+          }
         };
         vBuf.addEventListener("updateend", onVInitDone);
 
+        tryAppend(vBuf, vInit, true);
+        if (mseFailedRef.current) return;
         tryAppend(aBuf, aInit, false);
+        if (mseFailedRef.current) return;
 
         setLoading(false);
         video.play().catch(() => {});
       } catch (e) {
-        const state = feedStateRef.current;
-        state.videoDone = true;
-        if (mediaSourceRef.current?.readyState === "open") {
-          try { mediaSourceRef.current.endOfStream(); } catch { /* ignore */ }
-        }
-        fallbackToFFmpeg(String(e));
+        if (mediaSourceRef.current === ms) fallbackToFFmpeg(String(e));
       }
     }, { once: true });
-  }, [feedChunks, tryAppend, flushQueue]);
-
-  const fallbackToFFmpeg = useCallback(async (reason: string) => {
-    console.warn(`MSE playback failed (${reason}), falling back to FFmpeg`);
-    setUsingFallback(true);
-    try {
-      const path = await tauriBridge.preparePreview(clip.folder);
-      setFallbackUrl(tauriBridge.toAssetUrl(path));
-      setLoading(false);
-    } catch (e) {
-      setError(String(e));
-      setLoading(false);
-    }
-  }, [clip.folder]);
+  }, [fallbackToFFmpeg, feedChunks, tryAppend, flushQueue]);
 
   useEffect(() => {
     let cancelled = false;
+    activeRef.current = true;
+    mseFailedRef.current = false;
+    usingFallbackRef.current = false;
+    fallbackReadyRef.current = false;
+    feedStateRef.current = createFeedState();
+    streamInfoRef.current = null;
+    const generation = ++playbackGenerationRef.current;
     (async () => {
       try {
         setLoading(true);
         setError(null);
+        setUsingFallback(false);
+        setFallbackUrl(null);
         const info = await tauriBridge.getClipStreamInfo(clip.folder);
         if (cancelled) return;
         streamInfoRef.current = info;
-        await startMsePlayback(info);
+        await startMsePlayback(info, generation);
       } catch (e) {
         if (!cancelled) await fallbackToFFmpeg(String(e));
       }
     })();
     return () => {
       cancelled = true;
-      const video = videoRef.current;
-      if (video) {
-        video.pause();
-        video.removeAttribute("src");
-        video.load();
-      }
-      if (objectUrlRef.current) {
-        URL.revokeObjectURL(objectUrlRef.current);
-        objectUrlRef.current = null;
-      }
-      if (mediaSourceRef.current?.readyState === "open") {
-        try { mediaSourceRef.current.endOfStream(); } catch { /* ignore */ }
-      }
-      mediaSourceRef.current = null;
-      videoBufferRef.current = null;
-      audioBufferRef.current = null;
+      activeRef.current = false;
+      fallbackRequestRef.current++;
+      playbackGenerationRef.current++;
+      disposeMse();
       feedStateRef.current = createFeedState();
+      if (fallbackPathRef.current) {
+        tauriBridge.cleanupPreview(fallbackPathRef.current).catch(() => {});
+        fallbackPathRef.current = null;
+      }
     };
-  }, [clip.folder, startMsePlayback, fallbackToFFmpeg]);
+  }, [clip.folder, disposeMse, startMsePlayback, fallbackToFFmpeg]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -255,12 +355,37 @@ export default function VideoPreviewDialog({
       if (buffered.length === 0) return;
       const bufferedEnd = buffered.end(buffered.length - 1);
       if (bufferedEnd - video.currentTime < PRELOAD_AHEAD_SECONDS) {
-        feedChunks();
+        void feedChunks(playbackGenerationRef.current);
       }
     };
     video.addEventListener("timeupdate", onTimeUpdate);
     return () => video.removeEventListener("timeupdate", onTimeUpdate);
   }, [feedChunks, usingFallback]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const onVideoError = () => {
+      if (!activeRef.current) return;
+      const reason = video.error?.message || "Video playback error";
+      if (usingFallbackRef.current) {
+        if (!fallbackReadyRef.current) return;
+        setError(reason);
+        setLoading(false);
+      } else {
+        mseFailureRef.current(reason);
+      }
+    };
+    const onCanPlay = () => {
+      if (usingFallbackRef.current && fallbackReadyRef.current) setLoading(false);
+    };
+    video.addEventListener("error", onVideoError);
+    video.addEventListener("canplay", onCanPlay);
+    return () => {
+      video.removeEventListener("error", onVideoError);
+      video.removeEventListener("canplay", onCanPlay);
+    };
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -269,15 +394,6 @@ export default function VideoPreviewDialog({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
-
-  useEffect(() => {
-    return () => {
-      if (fallbackUrl) {
-        const path = decodeURIComponent(fallbackUrl.replace(/^asset:\/\/localhost\//, "")).replace(/\//g, "\\");
-        tauriBridge.cleanupPreview(path).catch(() => {});
-      }
-    };
-  }, [fallbackUrl]);
 
   return (
     <div
@@ -303,26 +419,25 @@ export default function VideoPreviewDialog({
         </div>
 
         <div className="relative bg-black" style={{ aspectRatio: "16 / 9" }}>
+          <video
+            ref={videoRef}
+            src={usingFallback ? fallbackUrl ?? undefined : undefined}
+            controls
+            autoPlay
+            className={`h-full w-full ${loading || error ? "invisible" : ""}`}
+          />
           {loading ? (
-            <div className="flex h-full items-center justify-center">
+            <div className="absolute inset-0 flex items-center justify-center">
               <div className="flex flex-col items-center gap-3">
                 <div className="h-10 w-10 animate-spin rounded-full border-2 border-accent border-t-transparent" />
                 <p className="text-sm text-text-muted">{t("preview.preparing")}</p>
               </div>
             </div>
           ) : error ? (
-            <div className="flex h-full items-center justify-center">
+            <div className="absolute inset-0 flex items-center justify-center">
               <p className="text-sm text-danger">{t("preview.error")}: {error}</p>
             </div>
-          ) : (
-            <video
-              ref={videoRef}
-              src={usingFallback ? fallbackUrl ?? undefined : undefined}
-              controls
-              autoPlay
-              className="h-full w-full"
-            />
-          )}
+          ) : null}
         </div>
 
         <div className="flex items-center justify-between px-5 py-3">

@@ -138,7 +138,7 @@ pub fn list_clips(
 }
 
 pub fn get_clip_duration(clip_folder: &str) -> Result<String, String> {
-    let session_mpd_files = find_session_mpd_files(clip_folder);
+    let session_mpd_files = crate::streaming::find_session_mpd_paths(clip_folder);
     if session_mpd_files.is_empty() {
         return Ok("0:00".to_string());
     }
@@ -181,32 +181,14 @@ fn parse_iso8601_duration(s: &str) -> f64 {
     total
 }
 
-fn find_session_mpd_files(clip_folder: &str) -> Vec<String> {
-    let mut files = Vec::new();
-    fn walk_dir(dir: &Path, files: &mut Vec<String>) {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    walk_dir(&path, files);
-                } else if path.file_name().map(|n| n == "session.mpd").unwrap_or(false) {
-                    files.push(path.to_string_lossy().to_string());
-                }
-            }
-        }
-    }
-    walk_dir(Path::new(clip_folder), &mut files);
-    files
-}
-
 pub async fn generate_thumbnail(clip_folder: &str) -> Result<Option<String>, String> {
     let thumbnail_path = Path::new(clip_folder).join("thumbnail.jpg");
     if thumbnail_path.exists() {
         return Ok(Some(thumbnail_path.to_string_lossy().to_string()));
     }
-    let session_mpd_files = find_session_mpd_files(clip_folder);
+    let session_mpd_files = crate::streaming::find_session_mpd_paths(clip_folder);
     if let Some(first_mpd) = session_mpd_files.first() {
-        match crate::ffmpeg::extract_first_frame(first_mpd, &thumbnail_path.to_string_lossy()) {
+        match crate::ffmpeg::extract_first_frame(&first_mpd.to_string_lossy(), &thumbnail_path.to_string_lossy()) {
             Ok(_) => {
                 if thumbnail_path.exists() {
                     return Ok(Some(thumbnail_path.to_string_lossy().to_string()));
