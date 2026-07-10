@@ -26,6 +26,20 @@ export interface ReleaseInfo {
 
 export type GameIds = Record<string, string>;
 
+export interface SessionStreamInfo {
+  session_dir: string;
+  video_codec: string;
+  audio_codec: string;
+  video_init: string;
+  audio_init: string;
+  video_chunks: string[];
+  audio_chunks: string[];
+}
+
+export interface ClipStreamInfo {
+  sessions: SessionStreamInfo[];
+}
+
 export const tauriBridge = {
   getConfig: () => invoke<AppConfig>("get_config"),
   saveConfig: (userdata_path?: string, export_path?: string, theme?: string, language?: string) =>
@@ -39,6 +53,8 @@ export const tauriBridge = {
   generateThumbnail: (clipFolder: string) => invoke<string | null>("generate_thumbnail", { clipFolder }),
   preparePreview: (clipFolder: string) => invoke<string>("prepare_preview", { clipFolder }),
   cleanupPreview: (previewPath: string) => invoke<void>("cleanup_preview", { previewPath }),
+  getClipStreamInfo: (clipFolder: string) => invoke<ClipStreamInfo>("get_clip_stream_info", { clipFolder }),
+  readSegmentBytes: (filePath: string) => invoke<ArrayBuffer>("read_segment_bytes", { filePath }),
   getGameIds: () => invoke<GameIds>("get_game_ids"),
   saveGameIds: (gameIds: GameIds) => invoke<void>("save_game_ids", { gameIds }),
   fetchGameName: (gameId: string) => invoke<string>("fetch_game_name", { gameId }),

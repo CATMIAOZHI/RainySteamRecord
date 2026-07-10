@@ -65,7 +65,8 @@
     "error": "预览失败",
     "duration": "时长",
     "type": "类型",
-    "doubleClickHint": "双击预览"
+    "doubleClickHint": "双击预览",
+    "fallback": "兼容模式"
   },
   "messages": {
     "noClips": "片段文件夹为空。请至少录制一个片段后再使用。",

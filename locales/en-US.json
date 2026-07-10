@@ -65,7 +65,8 @@
     "error": "Preview failed",
     "duration": "Duration",
     "type": "Type",
-    "doubleClickHint": "Double-click to preview"
+    "doubleClickHint": "Double-click to preview",
+    "fallback": "Compatibility mode"
   },
   "messages": {
     "noClips": "Clip folder is empty. Please record at least one clip before using.",

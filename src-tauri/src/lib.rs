@@ -7,6 +7,7 @@ mod steam;
 mod ffmpeg;
 mod clip;
 mod update;
+mod streaming;
 
 use std::sync::Mutex;
 use tauri::Emitter;
@@ -88,6 +89,16 @@ async fn prepare_preview(clip_folder: String) -> Result<String, String> {
 #[tauri::command]
 fn cleanup_preview(preview_path: String) {
     ffmpeg::cleanup_preview(&preview_path);
+}
+
+#[tauri::command]
+fn get_clip_stream_info(clip_folder: String) -> Result<streaming::ClipStreamInfo, String> {
+    streaming::get_clip_stream_info(&clip_folder)
+}
+
+#[tauri::command]
+fn read_segment_bytes(file_path: String) -> Result<tauri::ipc::Response, String> {
+    streaming::read_segment_bytes(&file_path)
 }
 
 #[tauri::command]
@@ -219,6 +230,8 @@ pub fn run() {
             generate_thumbnail,
             prepare_preview,
             cleanup_preview,
+            get_clip_stream_info,
+            read_segment_bytes,
             get_game_ids,
             save_game_ids,
             fetch_game_name,
