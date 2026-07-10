@@ -276,3 +276,69 @@ pub fn extract_first_frame(session_mpd_path: &str, output_thumbnail_path: &str) 
     }
     Ok(())
 }
+
+pub async fn prepare_preview(clip_folder: &str) -> Result<String, String> {
+    let session_mpd_files = find_session_mpd_files(clip_folder);
+    if session_mpd_files.is_empty() {
+        return Err("No session.mpd files found".to_string());
+    }
+    let temp_dir = std::env::temp_dir();
+    let preview_path = temp_dir.join(format!("rainy_preview_{}.mp4", uuid::Uuid::new_v4()));
+    if preview_path.exists() {
+        let _ = fs::remove_file(&preview_path);
+    }
+    if session_mpd_files.len() == 1 {
+        let data_dir = Path::new(&session_mpd_files[0]).parent().ok_or("Invalid path")?;
+        let video_path = concat_init_and_chunks(data_dir, 0)?;
+        let audio_path = concat_init_and_chunks(data_dir, 1)?;
+        let ffmpeg = ffmpeg_path()?;
+        let result = Command::new(&ffmpeg)
+            .args(&["-i"])
+            .arg(&video_path)
+            .args(&["-i"])
+            .arg(&audio_path)
+            .args(&["-c", "copy"])
+            .arg(&preview_path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .map_err(|e| e.to_string())?;
+        let _ = fs::remove_file(&video_path);
+        let _ = fs::remove_file(&audio_path);
+        if !result.status.success() {
+            return Err(format!("FFmpeg preview merge failed: {}", String::from_utf8_lossy(&result.stderr)));
+        }
+    } else {
+        let mut temp_video_paths = Vec::new();
+        let mut temp_audio_paths = Vec::new();
+        for session_mpd in &session_mpd_files {
+            let data_dir = Path::new(session_mpd).parent().ok_or("Invalid path")?;
+            let video_path = concat_init_and_chunks(data_dir, 0)?;
+            let audio_path = concat_init_and_chunks(data_dir, 1)?;
+            temp_video_paths.push(video_path);
+            temp_audio_paths.push(audio_path);
+        }
+        let concatenated_video = concatenate_media_files(&temp_video_paths, true)?;
+        let concatenated_audio = concatenate_media_files(&temp_audio_paths, false)?;
+        let ffmpeg = ffmpeg_path()?;
+        let result = Command::new(&ffmpeg)
+            .args(&["-i"])
+            .arg(&concatenated_video)
+            .args(&["-i"])
+            .arg(&concatenated_audio)
+            .args(&["-c", "copy"])
+            .arg(&preview_path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .map_err(|e| e.to_string())?;
+        let _ = fs::remove_file(&concatenated_video);
+        let _ = fs::remove_file(&concatenated_audio);
+        for p in &temp_video_paths { let _ = fs::remove_file(p); }
+        for p in &temp_audio_paths { let _ = fs::remove_file(p); }
+        if !result.status.success() {
+            return Err(format!("FFmpeg preview merge failed: {}", String::from_utf8_lossy(&result.stderr)));
+        }
+    }
+    Ok(preview_path.to_string_lossy().to_string())
+}

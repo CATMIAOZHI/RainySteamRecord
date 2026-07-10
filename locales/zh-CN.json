@@ -60,6 +60,13 @@
     "manual": "手动选择userdata文件夹",
     "invalid": "所选目录不是有效的 userdata 文件夹。"
   },
+  "preview": {
+    "preparing": "正在准备预览...",
+    "error": "预览失败",
+    "duration": "时长",
+    "type": "类型",
+    "doubleClickHint": "双击预览"
+  },
   "messages": {
     "noClips": "片段文件夹为空。请至少录制一个片段后再使用。",
     "noSteamFound": "无法找到 Steam userdata 目录。正在退出。",

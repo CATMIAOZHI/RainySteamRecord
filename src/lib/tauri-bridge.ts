@@ -37,6 +37,7 @@ export const tauriBridge = {
     invoke<ClipInfo[]>("list_clips", { userdataPath, steamId, mediaType }),
   getClipDuration: (clipFolder: string) => invoke<string>("get_clip_duration", { clipFolder }),
   generateThumbnail: (clipFolder: string) => invoke<string | null>("generate_thumbnail", { clipFolder }),
+  preparePreview: (clipFolder: string) => invoke<string>("prepare_preview", { clipFolder }),
   getGameIds: () => invoke<GameIds>("get_game_ids"),
   saveGameIds: (gameIds: GameIds) => invoke<void>("save_game_ids", { gameIds }),
   fetchGameName: (gameId: string) => invoke<string>("fetch_game_name", { gameId }),

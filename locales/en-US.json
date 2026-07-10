@@ -60,6 +60,13 @@
     "manual": "Manually select userdata folder",
     "invalid": "Selected directory is not a valid userdata folder."
   },
+  "preview": {
+    "preparing": "Preparing preview...",
+    "error": "Preview failed",
+    "duration": "Duration",
+    "type": "Type",
+    "doubleClickHint": "Double-click to preview"
+  },
   "messages": {
     "noClips": "Clip folder is empty. Please record at least one clip before using.",
     "noSteamFound": "Cannot find Steam userdata directory. Exiting.",

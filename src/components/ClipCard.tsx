@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useStore } from "../stores/app";
 import { tauriBridge, type ClipInfo } from "../lib/tauri-bridge";
 
-export default function ClipCard({ clip }: { clip: ClipInfo }) {
+export default function ClipCard({ clip, onPreview }: { clip: ClipInfo; onPreview: (clip: ClipInfo) => void }) {
   const { selectedClips, toggleClipSelection } = useStore();
   const isSelected = selectedClips.has(clip.folder);
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
@@ -31,6 +31,7 @@ export default function ClipCard({ clip }: { clip: ClipInfo }) {
   return (
     <div
       onClick={() => toggleClipSelection(clip.folder)}
+      onDoubleClick={() => onPreview(clip)}
       className="group relative cursor-pointer overflow-hidden rounded-xl border-2 bg-surface transition-all duration-200"
       style={{
         borderColor: isSelected ? "var(--accent)" : "var(--border)",
@@ -59,6 +60,11 @@ export default function ClipCard({ clip }: { clip: ClipInfo }) {
         )}
         <div className="absolute bottom-2 right-2 rounded-md bg-black/70 px-2 py-0.5 text-xs font-bold text-white">
           {clip.duration}
+        </div>
+        <div className="absolute bottom-2 left-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/70 opacity-0 transition-opacity group-hover:opacity-100">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="white">
+            <path d="M5 3L13 8L5 13Z" />
+          </svg>
         </div>
         {isSelected && (
           <div className="absolute left-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-accent text-white">
