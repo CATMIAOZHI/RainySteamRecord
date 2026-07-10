@@ -1,0 +1,29 @@
+{
+  "app": {
+    "title": "RainySteamRecord",
+    "subtitle": "Steam Recording Browser & Exporter"
+  },
+  "common": {
+    "convert": "Convert Clips",
+    "exportAll": "Export All",
+    "clearSelection": "Clear Selection",
+    "settings": "Settings",
+    "exit": "Exit",
+    "previous": "Previous",
+    "next": "Next"
+  },
+  "filter": {
+    "steamId": "Steam ID",
+    "game": "Game",
+    "mediaType": "Media Type",
+    "allClips": "All Clips",
+    "manualClips": "Manual Clips",
+    "backgroundClips": "Background Recordings"
+  },
+  "conversion": {
+    "processing": "Processing clip {{current}}/{{total}} - {{percent}}%",
+    "complete": "Conversion complete",
+    "failed": "Conversion failed",
+    "cancelled": "Cancelled"
+  }
+}

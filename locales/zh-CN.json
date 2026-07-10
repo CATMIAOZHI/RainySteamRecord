@@ -1,0 +1,29 @@
+{
+  "app": {
+    "title": "RainySteamRecord",
+    "subtitle": "Steam 录像查看与导出工具"
+  },
+  "common": {
+    "convert": "转换片段",
+    "exportAll": "全部导出",
+    "clearSelection": "清除选择",
+    "settings": "设置",
+    "exit": "退出",
+    "previous": "上一页",
+    "next": "下一页"
+  },
+  "filter": {
+    "steamId": "Steam ID",
+    "game": "游戏",
+    "mediaType": "媒体类型",
+    "allClips": "所有片段",
+    "manualClips": "手动录制",
+    "backgroundClips": "后台录制"
+  },
+  "conversion": {
+    "processing": "处理片段 {{current}}/{{total}} - {{percent}}%",
+    "complete": "转换完成",
+    "failed": "转换失败",
+    "cancelled": "已取消"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "com.catmiaozhi.rainysteamrecord",
+  "description": "File system and dialog access for RainySteamRecord",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "shell:default",
+    "shell:allow-execute",
+    "core:event:default",
+    "core:window:default"
+  ]
+}

@@ -1,0 +1,97 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Theme: Steam Dark (default) */
+:root {
+  --bg: #1b2838;
+  --surface: #171a21;
+  --surface-hover: #2a475e;
+  --accent: #66c0f4;
+  --accent-hover: #4a9fd8;
+  --text: #c7d5e0;
+  --text-muted: #8f98a0;
+  --border: #2a475e;
+}
+
+:root[data-theme="steam-light"] {
+  --bg: #ffffff;
+  --surface: #f0f4f8;
+  --surface-hover: #dbe7f0;
+  --accent: #1a9cdd;
+  --accent-hover: #1583bd;
+  --text: #2c3e50;
+  --text-muted: #6b7c8a;
+  --border: #dbe7f0;
+}
+
+:root[data-theme="nord"] {
+  --bg: #2e3440;
+  --surface: #3b4252;
+  --surface-hover: #434c5e;
+  --accent: #88c0d0;
+  --accent-hover: #81a1c1;
+  --text: #e5e9f0;
+  --text-muted: #81a1c1;
+  --border: #434c5e;
+}
+
+:root[data-theme="dracula"] {
+  --bg: #282a36;
+  --surface: #383a4e;
+  --surface-hover: #44475a;
+  --accent: #bd93f9;
+  --accent-hover: #a878ff;
+  --text: #f8f8f2;
+  --text-muted: #6272a4;
+  --border: #44475a;
+}
+
+:root[data-theme="modern-dark"] {
+  --bg: #0f0f0f;
+  --surface: #1e1e1e;
+  --surface-hover: #2a2a2a;
+  --accent: #6366f1;
+  --accent-hover: #818cf8;
+  --text: #e5e5e5;
+  --text-muted: #a3a3a3;
+  --border: #2a2a2a;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100vh;
+  overflow: hidden;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--surface);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}
