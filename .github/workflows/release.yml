@@ -10,6 +10,13 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write
+    env:
+      FFMPEG_VERSION: N-125509-g8ad6288553-20260709
+      FFMPEG_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-09-14-21/ffmpeg-N-125509-g8ad6288553-win64-gpl.zip
+      FFMPEG_SHA256: 45dab16133ee201aca85da974b94ca4e3e22adf7231266274df44e63722d51c5
+      MPV_VERSION: v0.41.0-744-g304426c39
+      MPV_URL: https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20260610/mpv-x86_64-20260610-git-304426c.7z
+      MPV_SHA256: facac536baa73c7b925771af5e39a3c9cb16b8d75b59a6e9800de89799dffca7
     steps:
       - uses: actions/checkout@v4
 
@@ -23,26 +30,32 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path src-tauri/binaries -Force | Out-Null
-          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
-          Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip -UseBasicParsing
+          Invoke-WebRequest -Uri $env:FFMPEG_URL -OutFile ffmpeg.zip -UseBasicParsing
+          $hash = (Get-FileHash -Path ffmpeg.zip -Algorithm SHA256).Hash
+          if ($hash -ne $env:FFMPEG_SHA256) {
+            throw "FFmpeg archive SHA-256 mismatch: expected $env:FFMPEG_SHA256, got $hash"
+          }
           Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg_extract -Force
           $exe = Get-ChildItem ffmpeg_extract -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
+          if (-not $exe) { throw "ffmpeg.exe not found in archive" }
           Copy-Item $exe.FullName "src-tauri/binaries/ffmpeg.exe" -Force
-          Write-Host "ffmpeg.exe downloaded: $((Get-Item src-tauri/binaries/ffmpeg.exe).Length) bytes"
+          Write-Host "FFmpeg $env:FFMPEG_VERSION verified and downloaded: $((Get-Item src-tauri/binaries/ffmpeg.exe).Length) bytes"
 
       - name: Download mpv
         shell: pwsh
         run: |
-          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest"
-          $asset = $release.assets | Where-Object { $_.name -match '^mpv-x86_64-[^-]+-git-[^.]+\.7z$' } | Select-Object -First 1
-          if (-not $asset) { throw "Compatible mpv release asset not found" }
-          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile mpv.7z -UseBasicParsing
+          Invoke-WebRequest -Uri $env:MPV_URL -OutFile mpv.7z -UseBasicParsing
+          $hash = (Get-FileHash -Path mpv.7z -Algorithm SHA256).Hash
+          if ($hash -ne $env:MPV_SHA256) {
+            throw "mpv archive SHA-256 mismatch: expected $env:MPV_SHA256, got $hash"
+          }
           7z x mpv.7z -ompv_extract -y
           $mpv = Get-ChildItem mpv_extract -Recurse -Filter "mpv.exe" | Select-Object -First 1
           $d3d = Get-ChildItem mpv_extract -Recurse -Filter "d3dcompiler_43.dll" | Select-Object -First 1
           if (-not $mpv -or -not $d3d) { throw "Required mpv files not found in archive" }
           Copy-Item $mpv.FullName "src-tauri/binaries/mpv.exe" -Force
           Copy-Item $d3d.FullName "src-tauri/binaries/d3dcompiler_43.dll" -Force
+          Write-Host "mpv $env:MPV_VERSION verified and downloaded"
 
       - name: Install frontend dependencies
         run: npm ci --legacy-peer-deps

@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "./stores/app";
-import { onConversionProgress, onConversionDone } from "./lib/tauri-bridge";
 import { applyTheme } from "./lib/theme";
 import TitleBar from "./components/TitleBar";
 import FilterBar from "./components/FilterBar";
@@ -9,6 +8,11 @@ import ClipGrid from "./components/ClipGrid";
 import BottomBar from "./components/BottomBar";
 import SettingsDialog from "./components/SettingsDialog";
 import SteamVersionPicker from "./components/SteamVersionPicker";
+import ToastViewport from "./components/ToastViewport";
+import ExportJobCenter from "./components/ExportJobCenter";
+import ConfirmDialog from "./components/ConfirmDialog";
+import { listenForExportJobs, useExportJobs } from "./stores/export-jobs";
+import { overlayRegistry } from "./lib/overlay";
 
 export default function App() {
   const { i18n } = useTranslation();
@@ -24,6 +28,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showVersionPicker, setShowVersionPicker] = useState(false);
   const [initialized, setInitialized] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -32,18 +37,9 @@ export default function App() {
       setInitialized(true);
     })();
 
-    const unprog = onConversionProgress((data) => useStore.getState().setProgress(data));
-    const undone = onConversionDone((data) => {
-      const state = useStore.getState();
-      state.setConverting(false);
-      state.setProgress(null);
-      state.clearSelection();
-      alert(data.message);
-    });
-
+    const unlisten = listenForExportJobs();
     return () => {
-      unprog.then((fn) => fn());
-      undone.then((fn) => fn());
+      unlisten.then((fn) => fn());
     };
   }, []);
 
@@ -65,6 +61,40 @@ export default function App() {
   useEffect(() => {
     if (selectedSteamId) loadClips();
   }, [selectedSteamId, selectedMediaType, loadClips]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && overlayRegistry.closeTopOverlay()) {
+        event.preventDefault();
+        return;
+      }
+      if (overlayRegistry.hasOpenOverlay()) return;
+      const target = event.target as HTMLElement;
+      const editing = target.matches("input, textarea, select, [contenteditable=true]");
+      const state = useStore.getState();
+      if (event.ctrlKey && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        document.querySelector<HTMLInputElement>("#library-search")?.focus();
+      } else if (event.ctrlKey && event.key.toLowerCase() === "a" && !editing) {
+        event.preventDefault();
+        state.toggleFilteredSelection();
+      } else if (event.ctrlKey && event.key.toLowerCase() === "e" && !editing) {
+        event.preventDefault();
+        const exportState = useExportJobs.getState();
+        if (state.config) void exportState.start([...state.selectedClips], state.config.export_path, state.gameIds);
+      } else if (event.ctrlKey && event.key.toLowerCase() === "r") {
+        event.preventDefault();
+        void state.loadClips();
+      } else if (event.key === "Delete" && !editing && state.selectedClips.size > 0) {
+        event.preventDefault();
+        setConfirmDelete(true);
+      } else if (event.key === "Escape" && !editing) {
+        state.clearSelection();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [i18n]);
 
   const handleVersionSelect = async (path: string) => {
     setShowVersionPicker(false);
@@ -101,6 +131,9 @@ export default function App() {
 
       {showSettings && <SettingsDialog onClose={() => setShowSettings(false)} />}
       {showVersionPicker && <SteamVersionPicker onSelect={handleVersionSelect} />}
+      <ToastViewport />
+      <ExportJobCenter />
+      {confirmDelete && <ConfirmDialog title={i18n.t("library.deleteSelected")} message={i18n.t("library.deleteSelectedConfirm", { count: useStore.getState().selectedClips.size })} danger onClose={() => setConfirmDelete(false)} onConfirm={() => void useStore.getState().trashSelected()} />}
     </div>
   );
 }

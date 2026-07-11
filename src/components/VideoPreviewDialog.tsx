@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { tauriBridge, type ClipInfo, type ClipStreamInfo } from "../lib/tauri-bridge";
+import { useOverlay } from "../lib/overlay";
 
 const PRELOAD_AHEAD_SECONDS = 30;
 const CHUNKS_PER_BATCH = 5;
@@ -72,6 +73,7 @@ export default function VideoPreviewDialog({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
+  useOverlay(onClose);
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaSourceRef = useRef<MediaSource | null>(null);
   const objectUrlRef = useRef<string | null>(null);
@@ -503,14 +505,6 @@ export default function VideoPreviewDialog({
       video.removeEventListener("canplay", onCanPlay);
     };
   }, []);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
 
   return (
     <div

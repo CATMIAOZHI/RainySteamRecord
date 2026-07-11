@@ -9,6 +9,9 @@ export default function FilterBar() {
   const selectedGameId = useStore((state) => state.selectedGameId);
   const selectedDateFrom = useStore((state) => state.selectedDateFrom);
   const selectedDateTo = useStore((state) => state.selectedDateTo);
+  const search = useStore((state) => state.search);
+  const sortField = useStore((state) => state.sortField);
+  const sortDirection = useStore((state) => state.sortDirection);
   const clips = useStore((state) => state.clips);
   const gameIds = useStore((state) => state.gameIds);
   const selectSteamId = useStore((state) => state.selectSteamId);
@@ -16,11 +19,24 @@ export default function FilterBar() {
   const selectGameId = useStore((state) => state.selectGameId);
   const selectDateFrom = useStore((state) => state.selectDateFrom);
   const selectDateTo = useStore((state) => state.selectDateTo);
+  const setSearch = useStore((state) => state.setSearch);
+  const setSort = useStore((state) => state.setSort);
 
   const gameIdsInClips = [...new Set(clips.map((c) => c.game_id))].sort();
 
   return (
-    <div className="flex flex-wrap items-center gap-3 px-5 py-3">
+    <div className="flex flex-1 flex-wrap items-center gap-2 px-5 py-3">
+      <div className="relative min-w-[220px] flex-1">
+        <svg className="absolute left-3 top-3 text-text-muted" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+        <input
+          id="library-search"
+          type="search"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder={t("library.searchPlaceholder")}
+          className="h-10 w-full rounded-lg border border-border bg-surface pl-9 pr-3 text-sm text-text outline-none focus:border-accent"
+        />
+      </div>
       <select
         value={selectedSteamId}
         onChange={(e) => selectSteamId(e.target.value)}
@@ -31,6 +47,14 @@ export default function FilterBar() {
           <option key={id} value={id}>{id}</option>
         ))}
       </select>
+
+      <select value={sortField} onChange={(event) => setSort(event.target.value as typeof sortField, sortDirection)} className="h-10 rounded-lg border border-border bg-surface px-3 text-sm text-text outline-none focus:border-accent">
+        <option value="datetime">{t("library.sortTime")}</option>
+        <option value="duration">{t("library.sortDuration")}</option>
+        <option value="game">{t("library.sortGame")}</option>
+        <option value="size">{t("library.sortSize")}</option>
+      </select>
+      <button onClick={() => setSort(sortField)} className="h-10 rounded-lg border border-border bg-surface px-3 text-sm text-text hover:bg-surface-hover" title={t("library.sortDirection")}>{sortDirection === "asc" ? "↑" : "↓"}</button>
 
       <select
         value={selectedGameId}

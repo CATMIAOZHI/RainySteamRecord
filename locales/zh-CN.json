@@ -34,6 +34,34 @@
     "dateTo": "至",
     "clearDate": "清除时间"
   },
+  "library": {
+    "searchPlaceholder": "搜索游戏名、App ID 或目录名",
+    "sortTime": "按时间",
+    "sortDuration": "按时长",
+    "sortGame": "按游戏名",
+    "sortSize": "按大小",
+    "sortDirection": "切换升降序",
+    "resultSummary": "{{count}} 个结果 · {{size}}",
+    "details": "片段详情",
+    "game": "游戏",
+    "time": "时间",
+    "duration": "时长",
+    "size": "大小",
+    "resolution": "分辨率",
+    "codecs": "编解码器",
+    "frameRate": "帧率",
+    "sessions": "会话数",
+    "type": "类型",
+    "folder": "目录",
+    "regenerateSelected": "重建缩略图",
+    "deleteSelected": "批量删除",
+    "deleteSelectedConfirm": "确定将选中的 {{count}} 个片段移入回收站吗？"
+  },
+  "health": {
+    "healthy": "健康",
+    "warning": "警告",
+    "error": "损坏"
+  },
   "conversion": {
     "processing": "处理片段 {{current}}/{{total}} - {{percent}}%",
     "complete": "所有片段转换成功",
@@ -42,6 +70,34 @@
     "cancelled": "已取消",
     "initializing": "正在初始化转换...",
     "cancelConfirm": "转换正在进行中。你确定要退出吗？"
+  },
+  "exportJobs": {
+    "title": "导出任务中心",
+    "subtitle": "当前任务与本次运行历史",
+    "entry": "任务中心（{{count}}）",
+    "empty": "还没有导出任务",
+    "cancel": "取消任务",
+    "retryFailed": "重试失败项（{{count}}）",
+    "openFolder": "打开导出目录",
+    "alreadyRunning": "已有导出任务正在运行",
+    "successSummary": "已成功导出 {{count}} 个片段",
+    "partialSummary": "导出完成：成功 {{succeeded}} 个，失败 {{failed}} 个",
+    "cancelledSummary": "导出已取消：完成 {{succeeded}} / {{total}} 个",
+    "status": {
+      "queued": "等待开始",
+      "running": "正在导出",
+      "completed": "导出完成",
+      "completed-with-errors": "完成，但有错误",
+      "cancelled": "已取消",
+      "failed": "任务失败"
+    },
+    "itemStatus": {
+      "queued": "排队中",
+      "running": "处理中",
+      "succeeded": "已成功",
+      "failed": "失败",
+      "cancelled": "已取消"
+    }
   },
   "settings": {
     "title": "设置",
@@ -99,6 +155,11 @@
     "updateAvailable": "发现新版本 {{version}}",
     "noUpdate": "你已经在使用最新版本。",
     "updateCheckFailed": "无法获取最新版本信息。",
-    "configDeleted": "配置文件夹已删除。\n应用程序即将关闭。"
+    "configDeleted": "配置文件夹已删除。\n应用程序即将关闭。",
+    "pathCopied": "路径已复制",
+    "clipsDeleted": "已将 {{count}} 个片段移入回收站",
+    "thumbnailsRegenerated": "已重建 {{count}} 个片段的缩略图",
+    "clipsDeletedPartial": "批量删除完成：成功 {{succeeded}} 个，失败 {{failed}} 个",
+    "thumbnailsRegeneratedPartial": "缩略图重建完成：成功 {{succeeded}} 个，失败 {{failed}} 个"
   }
 }

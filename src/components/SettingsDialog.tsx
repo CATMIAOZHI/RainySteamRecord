@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useStore } from "../stores/app";
 import { THEMES, applyTheme } from "../lib/theme";
 import { tauriBridge, type ReleaseInfo } from "../lib/tauri-bridge";
+import { useOverlay } from "../lib/overlay";
 
 export default function SettingsDialog({ onClose }: { onClose: () => void }) {
   const { t, i18n } = useTranslation();
@@ -11,6 +12,7 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [language, setLanguage] = useState(config?.language || "zh-CN");
   const [exportPath, setExportPath] = useState(config?.export_path || "");
   const [updateInfo, setUpdateInfo] = useState<ReleaseInfo | { error: boolean } | null>(null);
+  useOverlay(onClose);
 
   useEffect(() => {
     applyTheme(theme);

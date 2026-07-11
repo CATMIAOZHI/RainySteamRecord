@@ -1,8 +1,24 @@
 import { create } from "zustand";
 import type { AppConfig, ClipInfo, GameIds } from "../lib/tauri-bridge";
 import { tauriBridge } from "../lib/tauri-bridge";
+import { defaultClipQuery, queryClips, selectRange, type ClipQuery, type SortDirection, type SortField } from "../lib/clip-library";
+import { toast } from "./toast";
+import i18n from "../lib/i18n";
+import { invalidateThumbnail } from "../lib/thumbnail-cache";
 
 let clipLoadGeneration = 0;
+const queryStorageKey = "rainy-clip-query-v1";
+
+function loadQuery(): ClipQuery {
+  if (typeof localStorage === "undefined") return defaultClipQuery;
+  try {
+    return { ...defaultClipQuery, ...JSON.parse(localStorage.getItem(queryStorageKey) || "{}") };
+  } catch {
+    return defaultClipQuery;
+  }
+}
+
+const savedQuery = loadQuery();
 
 interface AppState {
   config: AppConfig | null;
@@ -12,12 +28,14 @@ interface AppState {
   selectedGameId: string;
   selectedDateFrom: string;
   selectedDateTo: string;
+  search: string;
+  sortField: SortField;
+  sortDirection: SortDirection;
   clips: ClipInfo[];
   gameIds: GameIds;
   selectedClips: Set<string>;
-  isConverting: boolean;
-  progress: { current: number; total: number; percent: number; message: string } | null;
   loading: boolean;
+  selectionAnchor: string | null;
 
   loadConfig: () => Promise<void>;
   loadSteamIds: () => Promise<void>;
@@ -26,15 +44,17 @@ interface AppState {
   selectGameId: (id: string) => void;
   selectDateFrom: (date: string) => void;
   selectDateTo: (date: string) => void;
+  setSearch: (search: string) => void;
+  setSort: (field: SortField, direction?: SortDirection) => void;
   loadClips: () => Promise<void>;
   loadGameIds: () => Promise<void>;
   toggleClipSelection: (folder: string) => void;
+  selectClipRange: (folder: string, orderedFolders: string[]) => void;
   clearSelection: () => void;
-  setConverting: (v: boolean) => void;
-  setProgress: (p: { current: number; total: number; percent: number; message: string } | null) => void;
   saveConfig: (config: Partial<AppConfig>) => Promise<void>;
-  convertClips: (folders: string[]) => Promise<void>;
   toggleFilteredSelection: () => void;
+  trashSelected: () => Promise<void>;
+  regenerateSelectedThumbnails: () => Promise<void>;
 }
 
 export const useStore = create<AppState>((set, get) => ({
@@ -42,22 +62,24 @@ export const useStore = create<AppState>((set, get) => ({
   steamIds: [],
   selectedSteamId: "",
   selectedMediaType: "all",
-  selectedGameId: "",
-  selectedDateFrom: "",
-  selectedDateTo: "",
+  selectedGameId: savedQuery.gameId,
+  selectedDateFrom: savedQuery.dateFrom,
+  selectedDateTo: savedQuery.dateTo,
+  search: savedQuery.search,
+  sortField: savedQuery.sortField,
+  sortDirection: savedQuery.sortDirection,
   clips: [],
   gameIds: {},
   selectedClips: new Set(),
-  isConverting: false,
-  progress: null,
   loading: false,
+  selectionAnchor: null,
 
   loadConfig: async () => {
     try {
       const config = await tauriBridge.getConfig();
       set({ config });
     } catch (e) {
-      console.error("Failed to load config:", e);
+      toast(String(e), "error");
     }
   },
 
@@ -68,7 +90,7 @@ export const useStore = create<AppState>((set, get) => ({
       const ids = await tauriBridge.listSteamIds(config.userdata_path);
       set({ steamIds: ids, selectedSteamId: ids[0] || "" });
     } catch (e) {
-      console.error("Failed to list steam IDs:", e);
+      toast(String(e), "error");
     }
   },
 
@@ -92,6 +114,13 @@ export const useStore = create<AppState>((set, get) => ({
     set({ selectedDateTo: date, selectedClips: new Set() });
   },
 
+  setSearch: (search) => set({ search, selectedClips: new Set(), selectionAnchor: null }),
+  setSort: (sortField, direction) => set((state) => ({
+    sortField,
+    sortDirection: direction || (state.sortField === sortField && state.sortDirection === "desc" ? "asc" : "desc"),
+    selectionAnchor: null,
+  })),
+
   loadClips: async () => {
     const { config, selectedSteamId, selectedMediaType } = get();
     if (!config?.userdata_path || !selectedSteamId) return;
@@ -112,11 +141,11 @@ export const useStore = create<AppState>((set, get) => ({
             set((state) => ({ gameIds: { ...state.gameIds, ...updated } }));
           }
         } catch (e) {
-          console.error("Failed to fetch game names:", e);
+          toast(String(e), "error");
         }
       }
     } catch (e) {
-      console.error("Failed to load clips:", e);
+      toast(String(e), "error");
       if (generation === clipLoadGeneration) set({ clips: [], loading: false });
     }
   },
@@ -126,7 +155,7 @@ export const useStore = create<AppState>((set, get) => ({
       const ids = await tauriBridge.getGameIds();
       set({ gameIds: ids });
     } catch (e) {
-      console.error("Failed to load game IDs:", e);
+      toast(String(e), "error");
     }
   },
 
@@ -138,13 +167,14 @@ export const useStore = create<AppState>((set, get) => ({
     } else {
       newSet.add(folder);
     }
-    set({ selectedClips: newSet });
+    set({ selectedClips: newSet, selectionAnchor: folder });
   },
 
-  clearSelection: () => set({ selectedClips: new Set() }),
+  selectClipRange: (folder, orderedFolders) => set((state) => ({
+    selectedClips: selectRange(orderedFolders, state.selectionAnchor, folder, state.selectedClips),
+  })),
 
-  setConverting: (v) => set({ isConverting: v }),
-  setProgress: (p) => set({ progress: p }),
+  clearSelection: () => set({ selectedClips: new Set(), selectionAnchor: null }),
 
   saveConfig: async (partial) => {
     const { config } = get();
@@ -159,21 +189,10 @@ export const useStore = create<AppState>((set, get) => ({
     set({ config: newConfig });
   },
 
-  convertClips: async (folders) => {
-    const { config, gameIds } = get();
-    if (!config?.export_path || folders.length === 0) return;
-    set({ isConverting: true, progress: { current: 0, total: folders.length, percent: 0, message: "Initializing..." } });
-    try {
-      await tauriBridge.convertClips(folders, config.export_path, gameIds);
-    } catch (e) {
-      console.error("Conversion failed:", e);
-      set({ isConverting: false, progress: null });
-    }
-  },
-
   toggleFilteredSelection: () => {
-    const { clips, selectedGameId, selectedDateFrom, selectedDateTo, selectedClips } = get();
-    const filtered = filterClips(clips, selectedGameId, selectedDateFrom, selectedDateTo);
+    const state = get();
+    const { selectedClips } = state;
+    const filtered = getVisibleClips(state);
     const allSelected = filtered.length > 0 && filtered.every((clip) => selectedClips.has(clip.folder));
     const next = new Set(selectedClips);
     for (const clip of filtered) {
@@ -182,14 +201,60 @@ export const useStore = create<AppState>((set, get) => ({
     }
     set({ selectedClips: next });
   },
+
+  trashSelected: async () => {
+    const folders = [...get().selectedClips];
+    if (!folders.length) return;
+    try {
+      const result = await tauriBridge.trashClips(folders);
+      if (result.succeeded.length) {
+        set({ selectedClips: new Set(result.failed.map((item) => item.clip_folder)), selectionAnchor: null });
+        await get().loadClips();
+      }
+      if (result.failed.length) toast(i18n.t("messages.clipsDeletedPartial", { succeeded: result.succeeded.length, failed: result.failed.length }), "error");
+      else toast(i18n.t("messages.clipsDeleted", { count: result.succeeded.length }), "success");
+    } catch (error) {
+      toast(String(error), "error");
+    }
+  },
+
+  regenerateSelectedThumbnails: async () => {
+    const folders = [...get().selectedClips];
+    if (!folders.length) return;
+    try {
+      const result = await tauriBridge.regenerateThumbnails(folders);
+      result.succeeded.forEach((item) => invalidateThumbnail(item.clip_folder));
+      if (result.failed.length) toast(i18n.t("messages.thumbnailsRegeneratedPartial", { succeeded: result.succeeded.length, failed: result.failed.length }), "error");
+      else toast(i18n.t("messages.thumbnailsRegenerated", { count: result.succeeded.length }), "success");
+    } catch (error) {
+      toast(String(error), "error");
+    }
+  },
 }));
 
-export function filterClips(clips: ClipInfo[], gameId: string, dateFrom: string, dateTo: string) {
-  return clips.filter((clip) => {
-    if (gameId && clip.game_id !== gameId) return false;
-    const date = clip.datetime?.slice(0, 10);
-    if (dateFrom && (!date || date < dateFrom)) return false;
-    if (dateTo && (!date || date > dateTo)) return false;
-    return true;
-  });
+let persistedQuery = JSON.stringify(savedQuery);
+useStore.subscribe((state) => {
+  if (typeof localStorage === "undefined") return;
+  const query = JSON.stringify({
+    search: state.search,
+    gameId: state.selectedGameId,
+    dateFrom: state.selectedDateFrom,
+    dateTo: state.selectedDateTo,
+    sortField: state.sortField,
+    sortDirection: state.sortDirection,
+  } satisfies ClipQuery);
+  if (query === persistedQuery) return;
+  persistedQuery = query;
+  localStorage.setItem(queryStorageKey, query);
+});
+
+export function getVisibleClips(state: Pick<AppState, "clips" | "gameIds" | "search" | "selectedGameId" | "selectedDateFrom" | "selectedDateTo" | "sortField" | "sortDirection">) {
+  return queryClips(state.clips, {
+    search: state.search,
+    gameId: state.selectedGameId,
+    dateFrom: state.selectedDateFrom,
+    dateTo: state.selectedDateTo,
+    sortField: state.sortField,
+    sortDirection: state.sortDirection,
+  }, state.gameIds);
 }

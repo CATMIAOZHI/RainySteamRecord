@@ -22,7 +22,10 @@ impl ProcessJob {
         unsafe {
             let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
             if handle.is_null() {
-                return Err(format!("Failed to create process job: {}", std::io::Error::last_os_error()));
+                return Err(format!(
+                    "Failed to create process job: {}",
+                    std::io::Error::last_os_error()
+                ));
             }
             let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
             info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;

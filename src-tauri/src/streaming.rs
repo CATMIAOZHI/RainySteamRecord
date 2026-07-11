@@ -21,6 +21,16 @@ pub struct ClipStreamInfo {
     pub sessions: Vec<SessionInfo>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct MpdMetadata {
+    pub duration_seconds: f64,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub video_codec: Option<String>,
+    pub audio_codec: Option<String>,
+    pub frame_rate: Option<f64>,
+}
+
 pub(crate) fn segment_number(name: &str) -> Option<u32> {
     let stem = name.strip_suffix(".m4s")?;
     let (stream, number) = stem.rsplit_once('-')?;
@@ -115,7 +125,7 @@ fn extract_attribute(content: &str, name: &str) -> Option<String> {
     Some(rest.split_once('"')?.0.to_string())
 }
 
-fn parse_iso8601_duration(value: &str) -> f64 {
+pub(crate) fn parse_iso8601_duration(value: &str) -> f64 {
     let mut total = 0.0;
     let mut number = String::new();
     for ch in value.strip_prefix("PT").unwrap_or(value).chars() {
@@ -134,6 +144,84 @@ fn parse_iso8601_duration(value: &str) -> f64 {
         number.clear();
     }
     total
+}
+
+fn parse_frame_rate(value: &str) -> Option<f64> {
+    if let Some((numerator, denominator)) = value.split_once('/') {
+        let numerator = numerator.parse::<f64>().ok()?;
+        let denominator = denominator.parse::<f64>().ok()?;
+        return (denominator > 0.0).then_some(numerator / denominator);
+    }
+    value.parse().ok()
+}
+
+fn tags<'a>(content: &'a str, name: &str) -> Vec<&'a str> {
+    let marker = format!("<{}", name);
+    content
+        .split(&marker)
+        .skip(1)
+        .filter_map(|rest| rest.split_once('>').map(|(tag, _)| tag))
+        .collect()
+}
+
+pub fn parse_mpd_metadata(content: &str) -> Result<MpdMetadata, String> {
+    if !content.contains("<MPD") {
+        return Err("Invalid MPD document".to_string());
+    }
+    let duration_seconds = extract_attribute(content, "mediaPresentationDuration")
+        .map(|value| parse_iso8601_duration(&value))
+        .unwrap_or(0.0);
+    let mut metadata = MpdMetadata {
+        duration_seconds,
+        video_codec: extract_codec(content, "video"),
+        audio_codec: extract_codec(content, "audio"),
+        ..MpdMetadata::default()
+    };
+    for tag in tags(content, "Representation") {
+        let mime_type = extract_attribute(tag, "mimeType").unwrap_or_default();
+        let codec = extract_attribute(tag, "codecs");
+        let is_video = mime_type.starts_with("video/")
+            || extract_attribute(tag, "width").is_some()
+            || codec.as_deref().is_some_and(|value| {
+                value.starts_with("avc") || value.starts_with("hev") || value.starts_with("hvc")
+            });
+        if is_video {
+            metadata.width = metadata
+                .width
+                .or_else(|| extract_attribute(tag, "width").and_then(|value| value.parse().ok()));
+            metadata.height = metadata
+                .height
+                .or_else(|| extract_attribute(tag, "height").and_then(|value| value.parse().ok()));
+            metadata.frame_rate = metadata.frame_rate.or_else(|| {
+                extract_attribute(tag, "frameRate").and_then(|value| parse_frame_rate(&value))
+            });
+            metadata.video_codec = metadata.video_codec.or(codec);
+        } else if mime_type.starts_with("audio/") {
+            metadata.audio_codec = metadata.audio_codec.or(codec);
+        }
+    }
+    for tag in tags(content, "AdaptationSet") {
+        let content_type = extract_attribute(tag, "contentType").unwrap_or_default();
+        if content_type == "video" {
+            metadata.video_codec = metadata
+                .video_codec
+                .or_else(|| extract_attribute(tag, "codecs"));
+            metadata.width = metadata
+                .width
+                .or_else(|| extract_attribute(tag, "width").and_then(|value| value.parse().ok()));
+            metadata.height = metadata
+                .height
+                .or_else(|| extract_attribute(tag, "height").and_then(|value| value.parse().ok()));
+            metadata.frame_rate = metadata.frame_rate.or_else(|| {
+                extract_attribute(tag, "frameRate").and_then(|value| parse_frame_rate(&value))
+            });
+        } else if content_type == "audio" {
+            metadata.audio_codec = metadata
+                .audio_codec
+                .or_else(|| extract_attribute(tag, "codecs"));
+        }
+    }
+    Ok(metadata)
 }
 
 fn extract_segment_duration(mpd_content: &str) -> f64 {
@@ -158,7 +246,9 @@ fn collect_chunks(session_dir: &Path) -> (Vec<String>, Vec<String>) {
     if let Ok(entries) = fs::read_dir(session_dir) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if segment_number(&name).is_none() { continue; }
+            if segment_number(&name).is_none() {
+                continue;
+            }
             if name.starts_with("chunk-stream0-") {
                 video_chunks.push(entry.path());
             } else if name.starts_with("chunk-stream1-") {
@@ -166,19 +256,26 @@ fn collect_chunks(session_dir: &Path) -> (Vec<String>, Vec<String>) {
             }
         }
     }
-    let sort_chunks = |chunks: &mut Vec<PathBuf>| chunks.sort_by(|a, b| {
-        segment_sort(
-            &a.file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default(),
-            &b.file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default(),
-        )
-    });
+    let sort_chunks = |chunks: &mut Vec<PathBuf>| {
+        chunks.sort_by(|a, b| {
+            segment_sort(
+                &a.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+                &b.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+            )
+        })
+    };
     sort_chunks(&mut video_chunks);
     sort_chunks(&mut audio_chunks);
-    let stringify = |chunks: Vec<PathBuf>| chunks.into_iter().map(|p| p.to_string_lossy().to_string()).collect();
+    let stringify = |chunks: Vec<PathBuf>| {
+        chunks
+            .into_iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect()
+    };
     (stringify(video_chunks), stringify(audio_chunks))
 }
 
@@ -193,13 +290,14 @@ pub fn get_clip_stream_info(clip_folder: &str) -> Result<ClipStreamInfo, String>
         let mpd_path = dir.join("session.mpd");
         let mpd_content =
             fs::read_to_string(&mpd_path).map_err(|e| format!("Failed to read MPD: {}", e))?;
-        let video_codec =
-            extract_codec(&mpd_content, "video").unwrap_or_else(|| "avc1.42E01E".to_string());
-        let audio_codec =
-            extract_codec(&mpd_content, "audio").unwrap_or_else(|| "mp4a.40.2".to_string());
-        let mut session_duration = extract_attribute(&mpd_content, "mediaPresentationDuration")
-            .map(|value| parse_iso8601_duration(&value))
-            .unwrap_or(0.0);
+        let metadata = parse_mpd_metadata(&mpd_content)?;
+        let video_codec = metadata
+            .video_codec
+            .unwrap_or_else(|| "avc1.42E01E".to_string());
+        let audio_codec = metadata
+            .audio_codec
+            .unwrap_or_else(|| "mp4a.40.2".to_string());
+        let mut session_duration = metadata.duration_seconds;
         let segment_duration = extract_segment_duration(&mpd_content);
         let video_init = dir.join("init-stream0.m4s").to_string_lossy().to_string();
         let audio_init = dir.join("init-stream1.m4s").to_string_lossy().to_string();
@@ -240,7 +338,10 @@ pub fn read_segment_bytes(file_path: &str) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_segment_duration, parse_iso8601_duration, segment_number, segment_sort};
+    use super::{
+        extract_segment_duration, parse_iso8601_duration, parse_mpd_metadata, segment_number,
+        segment_sort,
+    };
 
     #[test]
     fn parses_stream_timing() {
@@ -251,6 +352,17 @@ mod tests {
             ),
             3.0
         );
+    }
+
+    #[test]
+    fn parses_video_metadata_and_fractional_frame_rate() {
+        let metadata = parse_mpd_metadata(r#"<MPD mediaPresentationDuration="PT1M2.5S"><Period><AdaptationSet contentType="video" codecs="hev1.1.6.L93"><Representation width="1920" height="1080" frameRate="30000/1001" /></AdaptationSet><AdaptationSet contentType="audio" codecs="mp4a.40.2" /></Period></MPD>"#).unwrap();
+        assert_eq!(metadata.width, Some(1920));
+        assert_eq!(metadata.height, Some(1080));
+        assert!((metadata.frame_rate.unwrap() - 29.97002997).abs() < 0.000001);
+        assert_eq!(metadata.video_codec.as_deref(), Some("hev1.1.6.L93"));
+        assert_eq!(metadata.audio_codec.as_deref(), Some("mp4a.40.2"));
+        assert_eq!(metadata.duration_seconds, 62.5);
     }
 
     #[test]

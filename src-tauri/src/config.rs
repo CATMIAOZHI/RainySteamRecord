@@ -88,8 +88,8 @@ pub fn get_config_dir() -> PathBuf {
 
 mod dirs {
     pub fn desktop_dir() -> Option<std::path::PathBuf> {
-        std::env::var("USERPROFILE").ok().map(|home| {
-            std::path::PathBuf::from(home).join("Desktop")
-        })
+        std::env::var("USERPROFILE")
+            .ok()
+            .map(|home| std::path::PathBuf::from(home).join("Desktop"))
     }
 }

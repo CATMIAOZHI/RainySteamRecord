@@ -17,11 +17,13 @@
 | 功能 | 说明 |
 |------|------|
 | 🎬 **即时预览** | 双击片段卡片直接播放，优先使用 MSE 流式播放；HEVC 等不兼容格式自动使用内置 mpv 原生播放，无需等待完整合并 |
-| 🖼️ **缩略图网格** | 自动提取首帧缩略图，自适应卡片网格，分批无限滚动浏览 |
-| 🔎 **组合筛选** | 按 Steam ID、游戏、录像类型和起止日期筛选，并可一键选择当前全部筛选结果 |
-| 🗂️ **片段管理** | 右键预览、原生播放、单片导出、重建缩略图、修改游戏名、打开目录、复制路径或移入回收站 |
+| 🖼️ **虚拟化录像库** | 自动提取首帧缩略图，以行虚拟化的自适应网格流畅浏览大量录像 |
+| 🔎 **搜索、排序与筛选** | 搜索游戏名、App ID 或文件夹；按时间、时长、游戏、大小排序，并按 Steam ID、游戏、录像类型和日期范围筛选 |
+| 📊 **元数据与健康检查** | 展示录像总大小、分辨率、编码、帧率、会话数等详情，并标记缺失、空文件或流结构异常 |
+| 🗂️ **片段管理** | 支持 Shift 连选、筛选结果全选、批量重建缩略图/移入回收站，以及右键预览、改名、打开目录和复制路径 |
 | 🎮 **自动识别游戏名** | 自动识别每个片段对应的游戏，包括非 Steam 游戏（模拟器、Epic 等），通过 Steam API + CRC32 appid |
-| 📦 **批量导出** | 选中多个片段一键导出为 `.mp4`，FFmpeg `-c copy` 无损转换，自动重命名（游戏名_日期时间.mp4） |
+| 📦 **导出任务中心** | 批量无损导出 `.mp4`，逐项显示成功/失败、支持取消及仅重试失败项，并自动重命名（游戏名_日期时间.mp4） |
+| ⌨️ **快捷操作与通知** | Toast 汇总操作结果；支持 `Ctrl+F` 搜索、`Ctrl+A` 全选筛选结果、`Ctrl+E` 导出、`Ctrl+R` 刷新、`Delete` 删除和 `Esc` 关闭/清选 |
 | 🎨 **14 套内置主题** | 雨晴（默认）、Steam Dark、赛博朋克、霓虹蓝、Dracula、Nord、Gruvbox、Catppuccin 等 |
 | 🌐 **中英双语** | 基于 i18next 的国际化，默认中文，可切换英文 |
 | 🔄 **自动更新检测** | 启动时检查 GitHub Release 最新版本 |
@@ -49,14 +51,14 @@
 │                  React 19 + TypeScript            │
 │          (Tailwind CSS + 14 主题 + Zustand)       │
 │                        │                          │
-│           invoke ──────┤──── listen (event)       │
+│        typed invoke ───┤── conversion-event       │
 │                        ▼                          │
 │             Tauri 2 IPC 通道                       │
 │                        │                          │
 │   ┌─────────┬──────┴─────┬──────────┬─────────┐    │
 │   ▼         ▼            ▼          ▼         ▼    │
-│ config.rs steam.rs   ffmpeg.rs streaming.rs mpv.rs │
-│ 配置管理  Steam发现   转换导出   MSE流式预览  原生播放│
+│ config.rs steam.rs clip.rs ffmpeg.rs streaming.rs  │
+│ 配置管理  Steam发现  扫描/缓存 任务导出  MSE流式预览 │
 └──────────────────────────────────────────────────┘
 ```
 
@@ -82,6 +84,8 @@
 
 主程序使用 Windows Job Object 托管 FFmpeg 和 mpv；主程序退出时不会遗留媒体子进程。
 
+录像扫描支持把元数据、大小和健康检查结果写入版本化的 `clips_cache.json`，通过目录指纹只重扫新增或变化的录像，并可显式绕过缓存执行完整扫描。
+
 ---
 
 ## 📁 项目结构
@@ -97,15 +101,18 @@ RainySteamRecord/
 │       ├── mpv.rs          # 内置 mpv 原生播放
 │       ├── process_job.rs  # Windows Job Object 子进程托管
 │       ├── streaming.rs     # MSE 流式预览 (session.mpd 解析, 分段读取)
-│       ├── clip.rs          # 片段扫描, 时长解析, 缩略图生成, 文件缓存
+│       ├── clip.rs          # 扫描, 元数据/大小/健康检查, 版本化增量缓存
 │       └── update.rs       # GitHub Release 更新检测
 ├── src/
 │   ├── components/
 │   │   ├── VideoPreviewDialog.tsx  # MSE 播放器 + mpv/FFmpeg 后备
 │   │   ├── ClipCard.tsx            # 缩略图卡片与右键管理菜单
-│   │   ├── ClipGrid.tsx            # 自适应网格 + 无限滚动
-│   │   ├── FilterBar.tsx           # Steam ID/游戏/类型/日期筛选
-│   │   ├── BottomBar.tsx           # 导出/进度条
+│   │   ├── ClipGrid.tsx            # 自适应虚拟化网格
+│   │   ├── ClipDetailsDialog.tsx   # 元数据与健康详情
+│   │   ├── ExportJobCenter.tsx     # 导出任务与失败重试
+│   │   ├── FilterBar.tsx           # 搜索/排序/组合筛选
+│   │   ├── BottomBar.tsx           # 统计与批量操作
+│   │   ├── ToastViewport.tsx       # 全局操作通知
 │   │   ├── SettingsDialog.tsx      # 主题/语言/路径设置
 │   │   ├── TitleBar.tsx            # 无边框窗口控制
 │   │   └── SteamVersionPicker.tsx  # 首次运行 Steam 定位
@@ -119,7 +126,7 @@ RainySteamRecord/
 │   ├── zh-CN.json
 │   └── en-US.json
 └── .github/workflows/
-    └── release.yml          # CI: 下载 FFmpeg → Tauri build → 发布
+    └── release.yml          # CI: 固定并校验媒体工具 → Tauri build → 发布
 ```
 
 ---
@@ -151,10 +158,11 @@ npm run tauri:dev
 | `npm run tauri:build` | 构建生产应用（NSIS + MSI） |
 | `npm run lint` | 运行 ESLint |
 | `npm run typecheck` | TypeScript 类型检查 |
+| `npm test` | 运行 Vitest 单元测试 |
 
 ### 媒体二进制
 
-FFmpeg 和 mpv 二进制不提交到 git。开发时将 `ffmpeg.exe`、`mpv.exe` 和 `d3dcompiler_43.dll` 放到 `src-tauri/binaries/`，CI 会自动下载并随安装包分发。FFmpeg 路径解析顺序：exe 目录 → `CARGO_MANIFEST_DIR/binaries` → `%LOCALAPPDATA%\RainySteamRecord` → 系统 PATH。
+FFmpeg 和 mpv 二进制不提交到 git。开发时将 `ffmpeg.exe`、`mpv.exe` 和 `d3dcompiler_43.dll` 放到 `src-tauri/binaries/`；CI 使用固定版本 URL 下载 FFmpeg/mpv，校验归档 SHA-256 后再随安装包分发。FFmpeg 路径解析顺序：exe 目录 → `CARGO_MANIFEST_DIR/binaries` → `%LOCALAPPDATA%\RainySteamRecord` → 系统 PATH。
 
 ---
 

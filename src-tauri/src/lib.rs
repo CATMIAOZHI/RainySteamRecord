@@ -11,16 +11,79 @@ mod steam;
 mod streaming;
 mod update;
 
+use serde::Serialize;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
 use tauri::Emitter;
 
+struct ConversionJob {
+    job_id: String,
+    cancelled: Arc<AtomicBool>,
+}
+
 pub struct AppState {
     pub config: Mutex<config::AppConfig>,
     pub game_ids: Mutex<std::collections::HashMap<String, String>>,
-    pub conversion_cancelled: Arc<AtomicBool>,
+    conversion_job: Mutex<Option<ConversionJob>>,
+}
+
+#[derive(Debug, Serialize)]
+struct BatchItemSuccess {
+    clip_folder: String,
+    output_path: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct BatchItemFailure {
+    clip_folder: String,
+    error: String,
+}
+
+#[derive(Debug, Serialize)]
+struct BatchResult {
+    succeeded: Vec<BatchItemSuccess>,
+    failed: Vec<BatchItemFailure>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+enum ConversionEvent {
+    JobStarted {
+        job_id: String,
+        total: usize,
+    },
+    ItemStarted {
+        job_id: String,
+        index: usize,
+        clip_folder: String,
+    },
+    ItemSucceeded {
+        job_id: String,
+        index: usize,
+        clip_folder: String,
+        output_path: String,
+    },
+    ItemFailed {
+        job_id: String,
+        index: usize,
+        clip_folder: String,
+        error: String,
+    },
+    JobFinished {
+        job_id: String,
+        status: String,
+        total: usize,
+        succeeded: usize,
+        failed: usize,
+    },
+}
+
+fn emit_conversion(app: &tauri::AppHandle, event: ConversionEvent) {
+    if let Err(error) = app.emit("conversion-event", event) {
+        log::warn!("Failed to emit conversion event: {}", error);
+    }
 }
 
 #[tauri::command]
@@ -39,10 +102,18 @@ async fn save_config(
 ) -> Result<(), String> {
     let snapshot = {
         let mut config = state.config.lock().map_err(|e| e.to_string())?;
-        if let Some(p) = userdata_path { config.userdata_path = Some(p); }
-        if let Some(p) = export_path { config.export_path = p; }
-        if let Some(t) = theme { config.theme = t; }
-        if let Some(l) = language { config.language = l; }
+        if let Some(p) = userdata_path {
+            config.userdata_path = Some(p);
+        }
+        if let Some(p) = export_path {
+            config.export_path = p;
+        }
+        if let Some(t) = theme {
+            config.theme = t;
+        }
+        if let Some(l) = language {
+            config.language = l;
+        }
         config.clone()
     };
     tokio::task::spawn_blocking(move || config::save_config(&snapshot))
@@ -131,6 +202,69 @@ async fn trash_clip(clip_folder: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn trash_clips(clip_folders: Vec<String>) -> BatchResult {
+    let mut result = BatchResult {
+        succeeded: Vec::new(),
+        failed: Vec::new(),
+    };
+    for clip_folder in clip_folders {
+        let item = clip_folder.clone();
+        let outcome = tokio::task::spawn_blocking(move || {
+            let path = std::path::Path::new(&item);
+            if !path.is_dir() {
+                return Err("Clip folder does not exist".to_string());
+            }
+            trash::delete(path).map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| e.to_string())
+        .and_then(|value| value);
+        match outcome {
+            Ok(()) => result.succeeded.push(BatchItemSuccess {
+                clip_folder,
+                output_path: None,
+            }),
+            Err(error) => result.failed.push(BatchItemFailure { clip_folder, error }),
+        }
+    }
+    result
+}
+
+#[tauri::command]
+async fn regenerate_thumbnails(clip_folders: Vec<String>) -> BatchResult {
+    let mut result = BatchResult {
+        succeeded: Vec::new(),
+        failed: Vec::new(),
+    };
+    for clip_folder in clip_folders {
+        let thumbnail_path = std::path::Path::new(&clip_folder).join("thumbnail.jpg");
+        let removed = tokio::task::spawn_blocking(move || {
+            if thumbnail_path.exists() {
+                std::fs::remove_file(thumbnail_path).map_err(|e| e.to_string())?;
+            }
+            Ok::<(), String>(())
+        })
+        .await
+        .map_err(|e| e.to_string())
+        .and_then(|value| value);
+        let outcome = match removed {
+            Ok(()) => clip::generate_thumbnail(&clip_folder)
+                .await
+                .and_then(|path| path.ok_or_else(|| "No session.mpd files found".to_string())),
+            Err(error) => Err(error),
+        };
+        match outcome {
+            Ok(output_path) => result.succeeded.push(BatchItemSuccess {
+                clip_folder,
+                output_path: Some(output_path),
+            }),
+            Err(error) => result.failed.push(BatchItemFailure { clip_folder, error }),
+        }
+    }
+    result
+}
+
+#[tauri::command]
 async fn prepare_preview(clip_folder: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || ffmpeg::prepare_preview(&clip_folder))
         .await
@@ -138,10 +272,7 @@ async fn prepare_preview(clip_folder: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn open_mpv_preview(
-    clip_folder: String,
-    title: String,
-) -> Result<(), String> {
+async fn open_mpv_preview(clip_folder: String, title: String) -> Result<(), String> {
     mpv::open_preview(&clip_folder, &title)
 }
 
@@ -215,9 +346,10 @@ async fn merge_non_steam_games(
     userdata_path: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<std::collections::HashMap<String, String>, String> {
-    let non_steam = tokio::task::spawn_blocking(move || steam::load_non_steam_games(&userdata_path))
-        .await
-        .map_err(|e| e.to_string())??;
+    let non_steam =
+        tokio::task::spawn_blocking(move || steam::load_non_steam_games(&userdata_path))
+            .await
+            .map_err(|e| e.to_string())??;
     let (result, merged) = {
         let mut game_ids = state.game_ids.lock().map_err(|e| e.to_string())?;
         let mut merged = 0;
@@ -240,54 +372,119 @@ async fn merge_non_steam_games(
 
 #[tauri::command]
 async fn convert_clips(
+    job_id: String,
     clip_folders: Vec<String>,
     export_dir: String,
     game_ids: std::collections::HashMap<String, String>,
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
-) -> Result<bool, String> {
-    state.conversion_cancelled.store(false, Ordering::Release);
+) -> Result<(), String> {
+    if job_id.trim().is_empty() {
+        return Err("job_id must not be empty".to_string());
+    }
+    let cancelled = Arc::new(AtomicBool::new(false));
+    {
+        let mut active = state.conversion_job.lock().map_err(|e| e.to_string())?;
+        if let Some(job) = active.as_ref() {
+            return Err(format!("Conversion job {} is already active", job.job_id));
+        }
+        *active = Some(ConversionJob {
+            job_id: job_id.clone(),
+            cancelled: cancelled.clone(),
+        });
+    }
     let total = clip_folders.len();
-    let mut errors = false;
-    let mut completed = 0;
+    let mut succeeded = 0;
+    let mut failed = 0;
+    emit_conversion(
+        &app_handle,
+        ConversionEvent::JobStarted {
+            job_id: job_id.clone(),
+            total,
+        },
+    );
     for (idx, clip_folder) in clip_folders.iter().enumerate() {
-        if state.conversion_cancelled.load(Ordering::Acquire) { break; }
-        let _ = app_handle.emit(
-            "conversion-progress",
-            serde_json::json!({
-                "current": idx + 1,
-                "total": total,
-                "percent": ((idx as f64) / (total as f64) * 100.0) as i32,
-                "message": format!("Processing clip {}/{}", idx + 1, total),
-            }),
+        if cancelled.load(Ordering::Acquire) {
+            break;
+        }
+        emit_conversion(
+            &app_handle,
+            ConversionEvent::ItemStarted {
+                job_id: job_id.clone(),
+                index: idx,
+                clip_folder: clip_folder.clone(),
+            },
         );
-        match ffmpeg::convert_single_clip(
-            clip_folder,
-            &export_dir,
-            &game_ids,
-            state.conversion_cancelled.clone(),
-        ).await {
-            Ok(_) => { completed += 1; }
+        match ffmpeg::convert_single_clip(clip_folder, &export_dir, &game_ids, cancelled.clone())
+            .await
+        {
+            Ok(output_path) => {
+                succeeded += 1;
+                emit_conversion(
+                    &app_handle,
+                    ConversionEvent::ItemSucceeded {
+                        job_id: job_id.clone(),
+                        index: idx,
+                        clip_folder: clip_folder.clone(),
+                        output_path,
+                    },
+                );
+            }
             Err(e) => {
+                if cancelled.load(Ordering::Acquire) {
+                    break;
+                }
                 log::error!("Failed to convert clip {}: {}", clip_folder, e);
-                errors = true;
+                failed += 1;
+                emit_conversion(
+                    &app_handle,
+                    ConversionEvent::ItemFailed {
+                        job_id: job_id.clone(),
+                        index: idx,
+                        clip_folder: clip_folder.clone(),
+                        error: e,
+                    },
+                );
             }
         }
     }
-    let cancelled = state.conversion_cancelled.load(Ordering::Acquire);
-    let _ = app_handle.emit("conversion-done", serde_json::json!({
-        "success": !errors && !cancelled,
-        "cancelled": cancelled,
-        "completed": completed,
-        "total": total,
-        "message": if cancelled { "Conversion cancelled" } else if !errors { "All clips converted successfully" } else { "Some clips failed to convert" },
-    }));
-    Ok(!errors)
+    let status = if cancelled.load(Ordering::Acquire) {
+        "cancelled"
+    } else if failed > 0 {
+        "completed-with-errors"
+    } else {
+        "completed"
+    };
+    emit_conversion(
+        &app_handle,
+        ConversionEvent::JobFinished {
+            job_id: job_id.clone(),
+            status: status.to_string(),
+            total,
+            succeeded,
+            failed,
+        },
+    );
+    let mut active = state.conversion_job.lock().map_err(|e| e.to_string())?;
+    if active.as_ref().is_some_and(|job| job.job_id == job_id) {
+        *active = None;
+    }
+    Ok(())
 }
 
 #[tauri::command]
-fn cancel_conversion(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    state.conversion_cancelled.store(true, Ordering::Release);
+fn cancel_conversion(job_id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let active = state.conversion_job.lock().map_err(|e| e.to_string())?;
+    let job = active
+        .as_ref()
+        .ok_or_else(|| "No conversion job is active".to_string())?;
+    if job.job_id != job_id {
+        return Err(format!(
+            "Active conversion job id does not match {}",
+            job_id
+        ));
+    }
+    job.cancelled.store(true, Ordering::Release);
     Ok(())
 }
 
@@ -333,7 +530,7 @@ pub fn run() {
         .manage(AppState {
             config: Mutex::new(config),
             game_ids: Mutex::new(game_ids),
-            conversion_cancelled: Arc::new(AtomicBool::new(false)),
+            conversion_job: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             get_config,
@@ -345,7 +542,9 @@ pub fn run() {
             get_clip_duration,
             generate_thumbnail,
             regenerate_thumbnail,
+            regenerate_thumbnails,
             trash_clip,
+            trash_clips,
             prepare_preview,
             open_mpv_preview,
             cleanup_preview,
@@ -364,4 +563,37 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BatchItemFailure, BatchItemSuccess, BatchResult, ConversionEvent};
+
+    #[test]
+    fn serializes_batch_result_and_tagged_conversion_event() {
+        let batch = BatchResult {
+            succeeded: vec![BatchItemSuccess {
+                clip_folder: "a".to_string(),
+                output_path: Some("a.jpg".to_string()),
+            }],
+            failed: vec![BatchItemFailure {
+                clip_folder: "b".to_string(),
+                error: "bad".to_string(),
+            }],
+        };
+        let value = serde_json::to_value(batch).unwrap();
+        assert_eq!(value["succeeded"][0]["output_path"], "a.jpg");
+        assert_eq!(value["failed"][0]["error"], "bad");
+
+        let value = serde_json::to_value(ConversionEvent::JobFinished {
+            job_id: "job-1".to_string(),
+            status: "completed".to_string(),
+            total: 2,
+            succeeded: 1,
+            failed: 1,
+        })
+        .unwrap();
+        assert_eq!(value["type"], "job-finished");
+        assert_eq!(value["job_id"], "job-1");
+    }
 }

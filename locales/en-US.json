@@ -34,6 +34,34 @@
     "dateTo": "To",
     "clearDate": "Clear Dates"
   },
+  "library": {
+    "searchPlaceholder": "Search game, App ID, or folder",
+    "sortTime": "By time",
+    "sortDuration": "By duration",
+    "sortGame": "By game",
+    "sortSize": "By size",
+    "sortDirection": "Toggle sort direction",
+    "resultSummary": "{{count}} results · {{size}}",
+    "details": "Clip Details",
+    "game": "Game",
+    "time": "Time",
+    "duration": "Duration",
+    "size": "Size",
+    "resolution": "Resolution",
+    "codecs": "Codecs",
+    "frameRate": "Frame rate",
+    "sessions": "Sessions",
+    "type": "Type",
+    "folder": "Folder",
+    "regenerateSelected": "Rebuild Thumbnails",
+    "deleteSelected": "Delete Selected",
+    "deleteSelectedConfirm": "Move {{count}} selected clips to the Recycle Bin?"
+  },
+  "health": {
+    "healthy": "Healthy",
+    "warning": "Warning",
+    "error": "Broken"
+  },
   "conversion": {
     "processing": "Processing clip {{current}}/{{total}} - {{percent}}%",
     "complete": "All clips converted successfully",
@@ -42,6 +70,34 @@
     "cancelled": "Cancelled",
     "initializing": "Initializing conversion...",
     "cancelConfirm": "Conversion is in progress. Are you sure you want to exit?"
+  },
+  "exportJobs": {
+    "title": "Export Job Center",
+    "subtitle": "Active job and history from this session",
+    "entry": "Jobs ({{count}})",
+    "empty": "No export jobs yet",
+    "cancel": "Cancel Job",
+    "retryFailed": "Retry Failed ({{count}})",
+    "openFolder": "Open Export Folder",
+    "alreadyRunning": "An export job is already running",
+    "successSummary": "Successfully exported {{count}} clips",
+    "partialSummary": "Export finished: {{succeeded}} succeeded, {{failed}} failed",
+    "cancelledSummary": "Export cancelled: {{succeeded}} of {{total}} completed",
+    "status": {
+      "queued": "Waiting",
+      "running": "Exporting",
+      "completed": "Completed",
+      "completed-with-errors": "Completed with Errors",
+      "cancelled": "Cancelled",
+      "failed": "Job Failed"
+    },
+    "itemStatus": {
+      "queued": "Queued",
+      "running": "Running",
+      "succeeded": "Succeeded",
+      "failed": "Failed",
+      "cancelled": "Cancelled"
+    }
   },
   "settings": {
     "title": "Settings",
@@ -90,6 +146,7 @@
     "noClips": "Clip folder is empty. Please record at least one clip before using.",
     "noSteamFound": "Cannot find Steam userdata directory. Exiting.",
     "deleteInvalidConfirm": "Found {{count}} invalid clips. Delete them?",
+    "deleteConfigConfirm": "Are you sure you want to delete the entire config folder?\nThis action cannot be undone.",
     "exportPathSet": "Export path set to: {{path}}",
     "exportPathInvalid": "Selected export directory is invalid, using default: {{path}}",
     "gameIdsUpdated": "Game ID database updated successfully!",
@@ -98,6 +155,11 @@
     "updateAvailable": "New version {{version}} available",
     "noUpdate": "You are using the latest version.",
     "updateCheckFailed": "Failed to fetch latest version info.",
-    "configDeleted": "Config folder deleted.\nApplication will close."
+    "configDeleted": "Config folder deleted.\nApplication will close.",
+    "pathCopied": "Path copied",
+    "clipsDeleted": "Moved {{count}} clips to the Recycle Bin",
+    "thumbnailsRegenerated": "Rebuilt thumbnails for {{count}} clips",
+    "clipsDeletedPartial": "Batch deletion finished: {{succeeded}} succeeded, {{failed}} failed",
+    "thumbnailsRegeneratedPartial": "Thumbnail rebuild finished: {{succeeded}} succeeded, {{failed}} failed"
   }
 }

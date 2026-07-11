@@ -15,6 +15,16 @@ export interface ClipInfo {
   game_name: string;
   datetime: string | null;
   duration: string;
+  duration_seconds: number;
+  size_bytes: number;
+  width: number | null;
+  height: number | null;
+  video_codec: string | null;
+  audio_codec: string | null;
+  frame_rate: number | null;
+  session_count: number;
+  health_status: "healthy" | "warning" | "error";
+  issues: string[];
   media_type: string;
 }
 
@@ -25,6 +35,28 @@ export interface ReleaseInfo {
 }
 
 export type GameIds = Record<string, string>;
+
+export interface BatchItemSuccess {
+  clip_folder: string;
+  output_path: string | null;
+}
+
+export interface BatchItemFailure {
+  clip_folder: string;
+  error: string;
+}
+
+export interface BatchResult {
+  succeeded: BatchItemSuccess[];
+  failed: BatchItemFailure[];
+}
+
+export type ConversionEvent =
+  | { type: "job-started"; job_id: string; total: number }
+  | { type: "item-started"; job_id: string; index: number; clip_folder: string }
+  | { type: "item-succeeded"; job_id: string; index: number; clip_folder: string; output_path: string }
+  | { type: "item-failed"; job_id: string; index: number; clip_folder: string; error: string }
+  | { type: "job-finished"; job_id: string; status: "completed" | "completed-with-errors" | "cancelled"; total: number; succeeded: number; failed: number };
 
 export interface SessionStreamInfo {
   session_dir: string;
@@ -56,6 +88,8 @@ export const tauriBridge = {
   generateThumbnail: (clipFolder: string) => invoke<string | null>("generate_thumbnail", { clipFolder }),
   regenerateThumbnail: (clipFolder: string) => invoke<string | null>("regenerate_thumbnail", { clipFolder }),
   trashClip: (clipFolder: string) => invoke<void>("trash_clip", { clipFolder }),
+  trashClips: (clipFolders: string[]) => invoke<BatchResult>("trash_clips", { clipFolders }),
+  regenerateThumbnails: (clipFolders: string[]) => invoke<BatchResult>("regenerate_thumbnails", { clipFolders }),
   preparePreview: (clipFolder: string) => invoke<string>("prepare_preview", { clipFolder }),
   openMpvPreview: (clipFolder: string, title: string) => invoke<void>("open_mpv_preview", { clipFolder, title }),
   cleanupPreview: (previewPath: string) => invoke<void>("cleanup_preview", { previewPath }),
@@ -66,19 +100,15 @@ export const tauriBridge = {
   fetchGameName: (gameId: string) => invoke<string>("fetch_game_name", { gameId }),
   fetchGameNamesBatch: (gameIds: string[]) => invoke<GameIds>("fetch_game_names_batch", { gameIds }),
   mergeNonSteamGames: (userdataPath: string) => invoke<GameIds>("merge_non_steam_games", { userdataPath }),
-  convertClips: (clipFolders: string[], exportDir: string, gameIds: GameIds) =>
-    invoke<boolean>("convert_clips", { clipFolders, exportDir, gameIds }),
-  cancelConversion: () => invoke<void>("cancel_conversion"),
+  convertClips: (jobId: string, clipFolders: string[], exportDir: string, gameIds: GameIds) =>
+    invoke<void>("convert_clips", { jobId, clipFolders, exportDir, gameIds }),
+  cancelConversion: (jobId: string) => invoke<void>("cancel_conversion", { jobId }),
   checkForUpdates: () => invoke<ReleaseInfo>("check_for_updates"),
   openFolder: (path: string) => invoke<void>("open_folder", { path }),
   getConfigDir: () => invoke<string>("get_config_dir"),
   toAssetUrl: (filePath: string) => convertFileSrc(filePath),
 };
 
-export function onConversionProgress(callback: (data: { current: number; total: number; percent: number; message: string }) => void) {
-  return listen<{ current: number; total: number; percent: number; message: string }>("conversion-progress", (event) => callback(event.payload));
-}
-
-export function onConversionDone(callback: (data: { success: boolean; message: string }) => void) {
-  return listen<{ success: boolean; message: string }>("conversion-done", (event) => callback(event.payload));
+export function onConversionEvent(callback: (data: ConversionEvent) => void) {
+  return listen<ConversionEvent>("conversion-event", (event) => callback(event.payload));
 }

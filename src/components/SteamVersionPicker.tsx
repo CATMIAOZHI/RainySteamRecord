@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { tauriBridge } from "../lib/tauri-bridge";
+import { useOverlay } from "../lib/overlay";
 
 export default function SteamVersionPicker({ onSelect }: { onSelect: (path: string) => void }) {
   const { t } = useTranslation();
   const [error, setError] = useState("");
+  useOverlay(() => {});
 
   const handleStandard = async () => {
     const path = await tauriBridge.findSteamUserdata();

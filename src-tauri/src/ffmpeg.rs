@@ -119,14 +119,18 @@ fn concat_init_and_chunks(
     let result = (|| {
         let mut file = fs::File::create(&temp_file).map_err(|e| e.to_string())?;
         for source in std::iter::once(&init_file).chain(chunks.iter()) {
-            if cancelled.load(Ordering::Acquire) { return Err("Conversion cancelled".to_string()); }
+            if cancelled.load(Ordering::Acquire) {
+                return Err("Conversion cancelled".to_string());
+            }
             let mut input = fs::File::open(source).map_err(|e| e.to_string())?;
             io::copy(&mut input, &mut file).map_err(|e| e.to_string())?;
         }
         file.flush().map_err(|e| e.to_string())?;
         Ok(temp_file.clone())
     })();
-    if result.is_err() { let _ = fs::remove_file(&temp_file); }
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_file);
+    }
     result
 }
 
@@ -147,7 +151,11 @@ fn run_command(cmd: &mut Command, cancelled: &AtomicBool) -> Result<(), String> 
             return Err("Conversion cancelled".to_string());
         }
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
-            return if status.success() { Ok(()) } else { Err(format!("FFmpeg exited with {}", status)) };
+            return if status.success() {
+                Ok(())
+            } else {
+                Err(format!("FFmpeg exited with {}", status))
+            };
         }
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -186,7 +194,9 @@ fn concatenate_media_files(
         .stderr(std::process::Stdio::null());
     let result = run_command(&mut cmd, cancelled);
     let _ = fs::remove_file(&list_file);
-    if result.is_err() { let _ = fs::remove_file(&output_file); }
+    if result.is_err() {
+        let _ = fs::remove_file(&output_file);
+    }
     result.map(|_| output_file)
 }
 
@@ -270,17 +280,26 @@ fn merge_clip_to_file(
         };
         let ffmpeg = ffmpeg_path()?;
         let mut cmd = create_command(&ffmpeg);
-        cmd.args(["-y", "-i"]).arg(video)
-            .args(["-i"]).arg(audio)
-            .args(["-c", "copy"]).arg(output_file)
+        cmd.args(["-y", "-i"])
+            .arg(video)
+            .args(["-i"])
+            .arg(audio)
+            .args(["-c", "copy"])
+            .arg(output_file)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
         run_command(&mut cmd, cancelled)
     })();
-    for path in temp_video_paths.iter().chain(temp_audio_paths.iter()).chain(extra_temps.iter()) {
+    for path in temp_video_paths
+        .iter()
+        .chain(temp_audio_paths.iter())
+        .chain(extra_temps.iter())
+    {
         let _ = fs::remove_file(path);
     }
-    if result.is_err() { let _ = fs::remove_file(output_file); }
+    if result.is_err() {
+        let _ = fs::remove_file(output_file);
+    }
     result
 }
 
@@ -289,18 +308,46 @@ pub async fn convert_single_clip(
     export_dir: &str,
     game_ids: &HashMap<String, String>,
     cancelled: Arc<AtomicBool>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let clip_folder = clip_folder.to_string();
     let export_dir = export_dir.to_string();
     let game_ids = game_ids.clone();
     tokio::task::spawn_blocking(move || {
         let output_filename = generate_output_filename(&clip_folder, &game_ids)?;
         let output_file = get_unique_filename(&export_dir, &output_filename);
-        merge_clip_to_file(&clip_folder, Path::new(&output_file), &cancelled)?;
-        Ok(())
+        let output_path = Path::new(&output_file);
+        let temp_file = output_path.with_file_name(format!(
+            ".{}.{}.tmp",
+            output_path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("export.mp4"),
+            uuid::Uuid::new_v4()
+        ));
+        let result = merge_clip_to_file(&clip_folder, &temp_file, &cancelled)
+            .and_then(|_| fs::rename(&temp_file, output_path).map_err(|e| e.to_string()));
+        if result.is_err() {
+            let _ = fs::remove_file(&temp_file);
+        }
+        result?;
+        Ok(output_file)
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::get_unique_filename;
+
+    #[test]
+    fn unique_output_does_not_use_existing_path() {
+        let root = std::env::temp_dir().join(format!("rainy-export-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("clip.mp4"), [1]).unwrap();
+        assert!(get_unique_filename(&root.to_string_lossy(), "clip.mp4").ends_with("clip_1.mp4"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
 
 pub fn extract_first_frame(

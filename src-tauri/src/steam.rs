@@ -274,7 +274,7 @@ pub async fn fetch_game_name(game_id: &str) -> String {
         game_id
     );
     let client = reqwest::Client::builder()
-        .user_agent("RainySteamRecord/0.1.1")
+        .user_agent("RainySteamRecord/0.2.0")
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
@@ -318,7 +318,7 @@ pub async fn fetch_game_names_batch(
         return result;
     }
     let client = reqwest::Client::builder()
-        .user_agent("RainySteamRecord/0.1.1")
+        .user_agent("RainySteamRecord/0.2.0")
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());

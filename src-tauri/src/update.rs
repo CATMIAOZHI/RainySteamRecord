@@ -23,10 +23,22 @@ pub async fn check_latest_release() -> Result<ReleaseInfo, String> {
         .map_err(|e| e.to_string())?;
     let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
     Ok(ReleaseInfo {
-        version: json.get("tag_name").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string(),
-        changelog: json.get("body").and_then(|v| v.as_str()).unwrap_or("No changelog").to_string(),
-        html_url: json.get("html_url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        version: json
+            .get("tag_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown")
+            .to_string(),
+        changelog: json
+            .get("body")
+            .and_then(|v| v.as_str())
+            .unwrap_or("No changelog")
+            .to_string(),
+        html_url: json
+            .get("html_url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
     })
 }
 
-pub const CURRENT_VERSION: &str = "v0.1.1";
+pub const CURRENT_VERSION: &str = "v0.2.0";
