@@ -23,7 +23,7 @@ export interface ClipInfo {
   audio_codec: string | null;
   frame_rate: number | null;
   session_count: number;
-  health_status: "healthy" | "warning" | "error";
+  health_status: "checking" | "healthy" | "warning" | "error";
   issues: string[];
   media_type: string;
 }
@@ -84,6 +84,8 @@ export const tauriBridge = {
   listSteamIds: (userdataPath: string) => invoke<string[]>("list_steam_ids", { userdataPath }),
   listClips: (userdataPath: string, steamId: string, mediaType: string, useCache?: boolean) =>
     invoke<ClipInfo[]>("list_clips", { userdataPath, steamId, mediaType, useCache }),
+  listClipsQuick: (userdataPath: string, steamId: string, mediaType: string) =>
+    invoke<ClipInfo[]>("list_clips_quick", { userdataPath, steamId, mediaType }),
   getClipDuration: (clipFolder: string) => invoke<string>("get_clip_duration", { clipFolder }),
   generateThumbnail: (clipFolder: string) => invoke<string | null>("generate_thumbnail", { clipFolder }),
   regenerateThumbnail: (clipFolder: string) => invoke<string | null>("regenerate_thumbnail", { clipFolder }),

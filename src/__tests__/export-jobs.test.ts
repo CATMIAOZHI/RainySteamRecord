@@ -27,10 +27,10 @@ describe("export job reducer", () => {
     expect(result.items.map((item) => item.status)).toEqual(["cancelled", "cancelled"]);
   });
 
-  it("requires both the item index and folder to match", () => {
-    const wrongFolder = reduceConversionEvent(job, { type: "item-started", job_id: "job-1", index: 0, clip_folder: "b" });
-    const wrongIndex = reduceConversionEvent(job, { type: "item-started", job_id: "job-1", index: 1, clip_folder: "a" });
+  it("requires both index and folder to match", () => {
+    const wrongFolder = reduceConversionEvent(job, { type: "item-started", job_id: "job-1", index: 0, clip_folder: "c" });
     expect(wrongFolder.items).toEqual(job.items);
+    const wrongIndex = reduceConversionEvent(job, { type: "item-started", job_id: "job-1", index: 1, clip_folder: "a" });
     expect(wrongIndex.items).toEqual(job.items);
   });
 });

@@ -183,11 +183,11 @@ fn concatenate_media_files(
     }
     fs::write(&list_file, &list_content).map_err(|e| e.to_string())?;
     let mut cmd = create_command(&ffmpeg);
-    cmd.args(&["-f", "concat", "-safe", "0", "-i"])
+    cmd.args(["-f", "concat", "-safe", "0", "-i"])
         .arg(&list_file)
-        .args(&["-c", "copy"]);
+        .args(["-c", "copy"]);
     if is_video {
-        cmd.args(&["-movflags", "+faststart", "-max_muxing_queue_size", "1024"]);
+        cmd.args(["-movflags", "+faststart", "-max_muxing_queue_size", "1024"]);
     }
     cmd.arg(&output_file);
     cmd.stdout(std::process::Stdio::null())
@@ -223,6 +223,7 @@ fn generate_output_filename(
     Ok(base)
 }
 
+#[allow(dead_code)]
 fn get_unique_filename(export_dir: &str, filename: &str) -> String {
     let full_path = Path::new(export_dir).join(filename);
     if !full_path.exists() {
@@ -244,6 +245,100 @@ fn get_unique_filename(export_dir: &str, filename: &str) -> String {
         }
     }
     full_path.to_string_lossy().to_string()
+}
+
+fn reserve_unique_filename(export_dir: &str, filename: &str) -> Result<(String, Vec<u8>), String> {
+    let export_path = Path::new(export_dir);
+    let stem = Path::new(filename)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("output");
+    let ext = Path::new(filename)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("mp4");
+    let mut i = 0;
+    loop {
+        let name = if i == 0 {
+            filename.to_string()
+        } else {
+            format!("{}_{}.{}", stem, i, ext)
+        };
+        let path = export_path.join(&name);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                use std::io::Write;
+                let token = format!("rainy-reservation:{}", uuid::Uuid::new_v4()).into_bytes();
+                if let Err(e) = file.write_all(&token) {
+                    let _ = fs::remove_file(&path);
+                    return Err(format!("Failed to write reservation token: {}", e));
+                }
+                if let Err(e) = file.sync_all() {
+                    let _ = fs::remove_file(&path);
+                    return Err(format!("Failed to sync reservation: {}", e));
+                }
+                return Ok((path.to_string_lossy().to_string(), token));
+            }
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
+                    i += 1;
+                    if i >= 1000 {
+                        return Err(
+                            "Could not find a unique filename after 1000 attempts".to_string()
+                        );
+                    }
+                    continue;
+                } else {
+                    return Err(format!("Failed to create placeholder file: {}", e));
+                }
+            }
+        }
+    }
+}
+
+fn reservation_matches(path: &Path, token: &[u8]) -> bool {
+    std::fs::read(path).is_ok_and(|content| content == token)
+}
+
+fn remove_reservation(path: &Path, token: &[u8]) {
+    if reservation_matches(path, token) {
+        let _ = fs::remove_file(path);
+    }
+}
+
+#[cfg(windows)]
+fn commit_output(source: &Path, destination: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let result = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if result == 0 {
+        Err(std::io::Error::last_os_error().to_string())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+fn commit_output(source: &Path, destination: &Path) -> Result<(), String> {
+    std::fs::rename(source, destination).map_err(|e| e.to_string())
 }
 
 fn merge_clip_to_file(
@@ -284,7 +379,7 @@ fn merge_clip_to_file(
             .arg(video)
             .args(["-i"])
             .arg(audio)
-            .args(["-c", "copy"])
+            .args(["-c", "copy", "-f", "mp4"])
             .arg(output_file)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
@@ -314,40 +409,40 @@ pub async fn convert_single_clip(
     let game_ids = game_ids.clone();
     tokio::task::spawn_blocking(move || {
         let output_filename = generate_output_filename(&clip_folder, &game_ids)?;
-        let output_file = get_unique_filename(&export_dir, &output_filename);
+        let (output_file, reservation_token) =
+            reserve_unique_filename(&export_dir, &output_filename)?;
         let output_path = Path::new(&output_file);
         let temp_file = output_path.with_file_name(format!(
-            ".{}.{}.tmp",
+            ".{}.{}.tmp.mp4",
             output_path
-                .file_name()
+                .file_stem()
                 .and_then(|value| value.to_str())
-                .unwrap_or("export.mp4"),
+                .unwrap_or("export"),
             uuid::Uuid::new_v4()
         ));
-        let result = merge_clip_to_file(&clip_folder, &temp_file, &cancelled)
-            .and_then(|_| fs::rename(&temp_file, output_path).map_err(|e| e.to_string()));
-        if result.is_err() {
+        if let Err(error) = merge_clip_to_file(&clip_folder, &temp_file, &cancelled) {
             let _ = fs::remove_file(&temp_file);
+            remove_reservation(output_path, &reservation_token);
+            return Err(error);
         }
-        result?;
+        if !reservation_matches(output_path, &reservation_token) {
+            let _ = fs::remove_file(&temp_file);
+            return Err("Reserved output path was replaced by another process".to_string());
+        }
+        if cancelled.load(Ordering::Acquire) {
+            let _ = fs::remove_file(&temp_file);
+            remove_reservation(output_path, &reservation_token);
+            return Err("Conversion cancelled".to_string());
+        }
+        if let Err(error) = commit_output(&temp_file, output_path) {
+            let _ = fs::remove_file(&temp_file);
+            remove_reservation(output_path, &reservation_token);
+            return Err(error);
+        }
         Ok(output_file)
     })
     .await
     .map_err(|e| e.to_string())?
-}
-
-#[cfg(test)]
-mod tests {
-    use super::get_unique_filename;
-
-    #[test]
-    fn unique_output_does_not_use_existing_path() {
-        let root = std::env::temp_dir().join(format!("rainy-export-test-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("clip.mp4"), [1]).unwrap();
-        assert!(get_unique_filename(&root.to_string_lossy(), "clip.mp4").ends_with("clip_1.mp4"));
-        std::fs::remove_dir_all(root).unwrap();
-    }
 }
 
 pub fn extract_first_frame(
@@ -394,5 +489,51 @@ pub fn prepare_preview(clip_folder: &str) -> Result<String, String> {
 }
 
 pub fn cleanup_preview(preview_path: &str) {
+    let path = Path::new(preview_path);
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if !file_name.starts_with("rainy_preview_") || !file_name.ends_with(".mp4") {
+        return;
+    }
+    let temp_dir = std::env::temp_dir();
+    if let Ok(canonical) = path.canonicalize() {
+        if let Ok(temp_canonical) = temp_dir.canonicalize() {
+            if !canonical.starts_with(&temp_canonical) {
+                return;
+            }
+        }
+    }
     let _ = fs::remove_file(preview_path);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{commit_output, reservation_matches, reserve_unique_filename};
+
+    #[test]
+    fn unique_output_does_not_use_existing_path() {
+        let root = std::env::temp_dir().join(format!("rainy-export-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("clip.mp4"), [1]).unwrap();
+        let (reserved, token) =
+            reserve_unique_filename(&root.to_string_lossy(), "clip.mp4").unwrap();
+        assert!(reserved.ends_with("clip_1.mp4"));
+        assert!(std::path::Path::new(&reserved).exists());
+        assert!(reservation_matches(std::path::Path::new(&reserved), &token));
+        std::fs::remove_file(reserved).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn commit_output_replaces_reserved_file() {
+        let root = std::env::temp_dir().join(format!("rainy-commit-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let destination = root.join("clip.mp4");
+        let source = root.join("clip.tmp.mp4");
+        std::fs::write(&destination, []).unwrap();
+        std::fs::write(&source, [1, 2, 3]).unwrap();
+        commit_output(&source, &destination).unwrap();
+        assert_eq!(std::fs::read(&destination).unwrap(), [1, 2, 3]);
+        assert!(!source.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

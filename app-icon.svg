@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="background" x1="72" y1="52" x2="440" y2="468" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFF7FB"/>
+      <stop offset="0.46" stop-color="#FFD8E5"/>
+      <stop offset="1" stop-color="#FFACC2"/>
+    </linearGradient>
+    <linearGradient id="screen" x1="164" y1="183" x2="365" y2="365" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF91AD"/>
+      <stop offset="1" stop-color="#FF5F88"/>
+    </linearGradient>
+    <linearGradient id="drop" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#9CE1FF"/>
+      <stop offset="1" stop-color="#5AB8EA"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="18" stdDeviation="15" flood-color="#C95B7D" flood-opacity="0.2"/>
+    </filter>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="116" fill="url(#background)"/>
+  <path d="M52 198C86 96 178 44 292 55" fill="none" stroke="#FFFFFF" stroke-width="18" stroke-linecap="round" opacity="0.48"/>
+  <circle cx="430" cy="383" r="42" fill="#FF8EAA" opacity="0.16"/>
+  <g filter="url(#shadow)">
+    <path d="M151 196L165 118C167 107 180 103 188 111L236 158H276L324 111C332 103 345 107 347 118L361 196Z" fill="#FF789B"/>
+    <path d="M170 169L178 132L213 167Z" fill="#FFD6E2"/>
+    <path d="M342 169L334 132L299 167Z" fill="#FFD6E2"/>
+    <rect x="111" y="163" width="290" height="238" rx="82" fill="#FFFFFF"/>
+    <rect x="145" y="197" width="222" height="155" rx="53" fill="url(#screen)"/>
+    <path d="M229 233C229 223 240 217 249 223L300 257C308 262 308 274 300 279L249 313C240 319 229 313 229 303Z" fill="#FFFFFF"/>
+    <circle cx="184" cy="376" r="11" fill="#FFD1DC"/>
+    <rect x="207" y="367" width="98" height="18" rx="9" fill="#FFD1DC"/>
+  </g>
+  <path d="M411 121C411 121 382 158 382 177C382 194 395 207 411 207C427 207 440 194 440 177C440 158 411 121 411 121Z" fill="url(#drop)"/>
+  <ellipse cx="401" cy="171" rx="7" ry="11" fill="#FFFFFF" opacity="0.75" transform="rotate(35 401 171)"/>
+  <path d="M101 102V142M81 122H121M87 108L115 136M115 108L87 136" stroke="#FF85A2" stroke-width="9" stroke-linecap="round"/>
+  <circle cx="101" cy="122" r="9" fill="#FFFFFF"/>
+</svg>

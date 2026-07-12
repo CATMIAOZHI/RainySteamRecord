@@ -7,6 +7,7 @@ import i18n from "../lib/i18n";
 import { invalidateThumbnail } from "../lib/thumbnail-cache";
 
 let clipLoadGeneration = 0;
+let initializationGeneration = 0;
 const queryStorageKey = "rainy-clip-query-v1";
 
 function loadQuery(): ClipQuery {
@@ -19,6 +20,16 @@ function loadQuery(): ClipQuery {
 }
 
 const savedQuery = loadQuery();
+
+export type InitializationStatus =
+  | "loading-config"
+  | "config-error"
+  | "needs-userdata"
+  | "saving-userdata"
+  | "loading-accounts"
+  | "accounts-error"
+  | "no-accounts"
+  | "ready";
 
 interface AppState {
   config: AppConfig | null;
@@ -35,7 +46,18 @@ interface AppState {
   gameIds: GameIds;
   selectedClips: Set<string>;
   loading: boolean;
+  scanning: boolean;
   selectionAnchor: string | null;
+  detailedScanError: string | null;
+
+  initializationStatus: InitializationStatus;
+  initializationError: string | null;
+  initialize: () => Promise<void>;
+  retryInitialization: () => Promise<void>;
+  chooseAnotherUserdata: () => void;
+  saveUserdataPath: (path: string) => Promise<void>;
+  clearFilters: () => void;
+  reloadClips: (options?: { force?: boolean }) => Promise<void>;
 
   loadConfig: () => Promise<void>;
   loadSteamIds: () => Promise<void>;
@@ -46,7 +68,7 @@ interface AppState {
   selectDateTo: (date: string) => void;
   setSearch: (search: string) => void;
   setSort: (field: SortField, direction?: SortDirection) => void;
-  loadClips: () => Promise<void>;
+  loadClips: (options?: { force?: boolean }) => Promise<void>;
   loadGameIds: () => Promise<void>;
   toggleClipSelection: (folder: string) => void;
   selectClipRange: (folder: string, orderedFolders: string[]) => void;
@@ -72,7 +94,122 @@ export const useStore = create<AppState>((set, get) => ({
   gameIds: {},
   selectedClips: new Set(),
   loading: false,
+  scanning: false,
   selectionAnchor: null,
+  detailedScanError: null,
+
+  initializationStatus: "loading-config",
+  initializationError: null,
+
+  initialize: async () => {
+    const generation = ++initializationGeneration;
+    set({ initializationStatus: "loading-config", initializationError: null });
+    try {
+      const config = await tauriBridge.getConfig();
+      if (generation !== initializationGeneration) return;
+      set({ config });
+      try {
+        const gameIds = await tauriBridge.getGameIds();
+        if (generation !== initializationGeneration) return;
+        set({ gameIds });
+      } catch (e) {
+        toast(String(e), "error");
+      }
+      if (!config.userdata_path) {
+        set({ initializationStatus: "needs-userdata" });
+      } else {
+        set({ initializationStatus: "loading-accounts" });
+        try {
+          const ids = await tauriBridge.listSteamIds(config.userdata_path);
+          if (generation !== initializationGeneration) return;
+          set({ steamIds: ids, selectedSteamId: ids[0] || "" });
+          if (ids.length === 0) {
+            set({ initializationStatus: "no-accounts" });
+          } else {
+            set({ initializationStatus: "ready" });
+          }
+        } catch (e) {
+          if (generation !== initializationGeneration) return;
+          set({ initializationStatus: "accounts-error", initializationError: String(e) });
+        }
+      }
+    } catch (e) {
+      if (generation !== initializationGeneration) return;
+      set({ initializationStatus: "config-error", initializationError: String(e) });
+    }
+  },
+
+  retryInitialization: async () => {
+    const { initializationStatus, config } = get();
+    if (initializationStatus === "config-error") {
+      await get().initialize();
+    } else if (initializationStatus === "accounts-error" || initializationStatus === "no-accounts") {
+      if (!config?.userdata_path) {
+        set({ initializationStatus: "needs-userdata" });
+        return;
+      }
+      const generation = ++initializationGeneration;
+      set({ initializationStatus: "loading-accounts", initializationError: null });
+      try {
+        const ids = await tauriBridge.listSteamIds(config.userdata_path);
+        if (generation !== initializationGeneration) return;
+        set({ steamIds: ids, selectedSteamId: ids[0] || "" });
+        if (ids.length === 0) {
+          set({ initializationStatus: "no-accounts" });
+        } else {
+          set({ initializationStatus: "ready" });
+        }
+      } catch (e) {
+        if (generation !== initializationGeneration) return;
+        set({ initializationStatus: "accounts-error", initializationError: String(e) });
+      }
+    }
+  },
+
+  chooseAnotherUserdata: () => {
+    initializationGeneration += 1;
+    set({ initializationStatus: "needs-userdata", initializationError: null });
+  },
+
+  saveUserdataPath: async (path: string) => {
+    const { initializationStatus } = get();
+    if (initializationStatus === "saving-userdata") return;
+    const generation = ++initializationGeneration;
+    set({ initializationStatus: "saving-userdata", initializationError: null });
+    try {
+      const config = get().config;
+      const exportPath = config?.export_path || "";
+      const theme = config?.theme || "rainy";
+      const language = config?.language || "zh-CN";
+      await tauriBridge.saveConfig(
+        path,
+        exportPath || undefined,
+        theme,
+        language
+      );
+      if (generation !== initializationGeneration) return;
+      const newConfig = {
+        userdata_path: path,
+        export_path: exportPath,
+        theme,
+        language
+      };
+      set({ config: newConfig });
+      set({ initializationStatus: "loading-accounts" });
+      const ids = await tauriBridge.listSteamIds(path);
+      if (generation !== initializationGeneration) return;
+      set({ steamIds: ids, selectedSteamId: ids[0] || "" });
+      if (ids.length === 0) {
+        set({ initializationStatus: "no-accounts" });
+      } else {
+        set({ initializationStatus: "ready" });
+      }
+    } catch (e) {
+      if (generation !== initializationGeneration) return;
+      set({ initializationStatus: "needs-userdata", initializationError: String(e) });
+      toast(String(e), "error");
+    }
+  },
 
   loadConfig: async () => {
     try {
@@ -99,37 +236,79 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   selectMediaType: (type) => {
-    set({ selectedMediaType: type, selectedClips: new Set() });
+    set({ selectedMediaType: type, selectedClips: new Set(), selectionAnchor: null });
   },
 
   selectGameId: (id) => {
-    set({ selectedGameId: id, selectedClips: new Set() });
+    set({ selectedGameId: id });
   },
 
   selectDateFrom: (date) => {
-    set({ selectedDateFrom: date, selectedClips: new Set() });
+    set({ selectedDateFrom: date });
   },
 
   selectDateTo: (date) => {
-    set({ selectedDateTo: date, selectedClips: new Set() });
+    set({ selectedDateTo: date });
   },
 
-  setSearch: (search) => set({ search, selectedClips: new Set(), selectionAnchor: null }),
+  setSearch: (search) => set({ search }),
   setSort: (sortField, direction) => set((state) => ({
     sortField,
     sortDirection: direction || (state.sortField === sortField && state.sortDirection === "desc" ? "asc" : "desc"),
     selectionAnchor: null,
   })),
 
-  loadClips: async () => {
+  clearFilters: () => {
+    set({
+      search: "",
+      selectedGameId: "",
+      selectedDateFrom: "",
+      selectedDateTo: "",
+      selectedMediaType: "all",
+    });
+  },
+
+  reloadClips: async (options) => {
+    await get().loadClips(options);
+  },
+
+  loadClips: async (options) => {
     const { config, selectedSteamId, selectedMediaType } = get();
     if (!config?.userdata_path || !selectedSteamId) return;
+    const force = options?.force ?? false;
     const generation = ++clipLoadGeneration;
-    set({ loading: true });
+    set({ loading: true, scanning: false, detailedScanError: null });
     try {
-      const clips = await tauriBridge.listClips(config.userdata_path, selectedSteamId, selectedMediaType, false);
+      if (!force) {
+        const clips = await tauriBridge.listClipsQuick(config.userdata_path, selectedSteamId, selectedMediaType);
+        if (generation === clipLoadGeneration) {
+          const folders = new Set(clips.map((clip) => clip.folder));
+          set((state) => ({
+            clips,
+            loading: false,
+            scanning: true,
+            selectedClips: new Set([...state.selectedClips].filter((folder) => folders.has(folder))),
+          }));
+        }
+      }
+    } catch (e) {
+      if (generation === clipLoadGeneration) {
+        toast(i18n.t("messages.quickScanFailed", { error: String(e) }), "error");
+        set({ loading: false, scanning: true });
+      }
+    }
+    if (generation !== clipLoadGeneration) return;
+    try {
+      const clips = await tauriBridge.listClips(config.userdata_path, selectedSteamId, selectedMediaType, !force);
       if (generation !== clipLoadGeneration) return;
-      set({ clips, loading: false });
+      const folders = new Set(clips.map((clip) => clip.folder));
+      set((state) => ({
+        clips,
+        scanning: false,
+        detailedScanError: null,
+        loading: false,
+        selectedClips: new Set([...state.selectedClips].filter((folder) => folders.has(folder))),
+      }));
       const gameIds = get().gameIds;
       const unknownIds = [...new Set(clips.map((c) => c.game_id))].filter(
         (id) => !gameIds[id] || gameIds[id] === id,
@@ -145,8 +324,9 @@ export const useStore = create<AppState>((set, get) => ({
         }
       }
     } catch (e) {
-      toast(String(e), "error");
-      if (generation === clipLoadGeneration) set({ clips: [], loading: false });
+      if (generation !== clipLoadGeneration) return;
+      toast(i18n.t("messages.fullScanFailed", { error: String(e) }), "error");
+      set({ loading: false, scanning: false, detailedScanError: String(e) });
     }
   },
 
@@ -207,8 +387,12 @@ export const useStore = create<AppState>((set, get) => ({
     if (!folders.length) return;
     try {
       const result = await tauriBridge.trashClips(folders);
-      if (result.succeeded.length) {
-        set({ selectedClips: new Set(result.failed.map((item) => item.clip_folder)), selectionAnchor: null });
+      const succeededSet = new Set(result.succeeded.map((item) => item.clip_folder));
+      if (succeededSet.size > 0) {
+        set((state) => ({
+          selectedClips: new Set([...state.selectedClips].filter((f) => !succeededSet.has(f))),
+          selectionAnchor: state.selectionAnchor && succeededSet.has(state.selectionAnchor) ? null : state.selectionAnchor,
+        }));
         await get().loadClips();
       }
       if (result.failed.length) toast(i18n.t("messages.clipsDeletedPartial", { succeeded: result.succeeded.length, failed: result.failed.length }), "error");

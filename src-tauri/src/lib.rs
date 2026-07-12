@@ -25,7 +25,10 @@ struct ConversionJob {
 
 pub struct AppState {
     pub config: Mutex<config::AppConfig>,
+    pub config_error: Mutex<Option<String>>,
+    config_save_lock: tokio::sync::Mutex<()>,
     pub game_ids: Mutex<std::collections::HashMap<String, String>>,
+    game_ids_save_lock: tokio::sync::Mutex<()>,
     conversion_job: Mutex<Option<ConversionJob>>,
 }
 
@@ -88,6 +91,33 @@ fn emit_conversion(app: &tauri::AppHandle, event: ConversionEvent) {
 
 #[tauri::command]
 fn get_config(state: tauri::State<'_, AppState>) -> Result<config::AppConfig, String> {
+    let has_config_error = state
+        .config_error
+        .lock()
+        .map_err(|e| e.to_string())?
+        .is_some();
+    if has_config_error {
+        let _guard = state.config_save_lock.blocking_lock();
+        let still_has_error = state
+            .config_error
+            .lock()
+            .map_err(|e| e.to_string())?
+            .is_some();
+        if !still_has_error {
+            return Ok(state.config.lock().map_err(|e| e.to_string())?.clone());
+        }
+        match config::load_config() {
+            Ok(loaded) => {
+                *state.config.lock().map_err(|e| e.to_string())? = loaded.clone();
+                *state.config_error.lock().map_err(|e| e.to_string())? = None;
+                return Ok(loaded);
+            }
+            Err(err) => {
+                *state.config_error.lock().map_err(|e| e.to_string())? = Some(err.clone());
+                return Err(err);
+            }
+        }
+    }
     let config = state.config.lock().map_err(|e| e.to_string())?;
     Ok(config.clone())
 }
@@ -100,25 +130,31 @@ async fn save_config(
     language: Option<String>,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
+    let _save_guard = state.config_save_lock.lock().await;
     let snapshot = {
-        let mut config = state.config.lock().map_err(|e| e.to_string())?;
+        let config = state.config.lock().map_err(|e| e.to_string())?;
+        let mut new_config = config.clone();
         if let Some(p) = userdata_path {
-            config.userdata_path = Some(p);
+            new_config.userdata_path = Some(p);
         }
         if let Some(p) = export_path {
-            config.export_path = p;
+            new_config.export_path = p;
         }
         if let Some(t) = theme {
-            config.theme = t;
+            new_config.theme = t;
         }
         if let Some(l) = language {
-            config.language = l;
+            new_config.language = l;
         }
-        config.clone()
+        new_config
     };
-    tokio::task::spawn_blocking(move || config::save_config(&snapshot))
+    let snapshot_clone = snapshot.clone();
+    tokio::task::spawn_blocking(move || config::save_config(&snapshot_clone))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())??;
+    *state.config.lock().map_err(|e| e.to_string())? = snapshot;
+    *state.config_error.lock().map_err(|e| e.to_string())? = None;
+    Ok(())
 }
 
 #[tauri::command]
@@ -133,7 +169,7 @@ fn validate_userdata(folder: String) -> Result<bool, String> {
 
 #[tauri::command]
 fn list_steam_ids(userdata_path: String) -> Result<Vec<String>, String> {
-    Ok(steam::list_steam_ids(&userdata_path)?)
+    steam::list_steam_ids(&userdata_path)
 }
 
 #[tauri::command]
@@ -163,6 +199,25 @@ async fn list_clips(
 }
 
 #[tauri::command]
+async fn list_clips_quick(
+    userdata_path: String,
+    steam_id: String,
+    media_type: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<clip::ClipInfo>, String> {
+    let game_ids = state
+        .game_ids
+        .lock()
+        .map_err(|error| error.to_string())?
+        .clone();
+    tokio::task::spawn_blocking(move || {
+        clip::list_clips_quick(&userdata_path, &steam_id, &media_type, &game_ids)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn get_clip_duration(clip_folder: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || clip::get_clip_duration(&clip_folder))
         .await
@@ -171,7 +226,7 @@ async fn get_clip_duration(clip_folder: String) -> Result<String, String> {
 
 #[tauri::command]
 async fn generate_thumbnail(clip_folder: String) -> Result<Option<String>, String> {
-    Ok(clip::generate_thumbnail(&clip_folder).await?)
+    clip::generate_thumbnail(&clip_folder).await
 }
 
 #[tauri::command]
@@ -312,13 +367,13 @@ async fn save_game_ids(
     game_ids: std::collections::HashMap<String, String>,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    {
-        let mut current = state.game_ids.lock().map_err(|e| e.to_string())?;
-        *current = game_ids.clone();
-    }
-    tokio::task::spawn_blocking(move || config::save_game_ids(&game_ids))
+    let _guard = state.game_ids_save_lock.lock().await;
+    let ids_clone = game_ids.clone();
+    tokio::task::spawn_blocking(move || config::save_game_ids(&ids_clone))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())??;
+    *state.game_ids.lock().map_err(|e| e.to_string())? = game_ids;
+    Ok(())
 }
 
 #[tauri::command]
@@ -332,13 +387,18 @@ async fn fetch_game_names_batch(
     state: tauri::State<'_, AppState>,
 ) -> Result<std::collections::HashMap<String, String>, String> {
     let existing = state.game_ids.lock().map_err(|e| e.to_string())?.clone();
-    let updated = steam::fetch_game_names_batch(&game_ids, &existing).await;
-    {
-        let mut current = state.game_ids.lock().map_err(|e| e.to_string())?;
-        *current = updated.clone();
+    let fetched = steam::fetch_game_names_batch(&game_ids, &existing).await;
+    let _guard = state.game_ids_save_lock.lock().await;
+    let mut current = state.game_ids.lock().map_err(|e| e.to_string())?.clone();
+    for (id, name) in &fetched {
+        current.insert(id.clone(), name.clone());
     }
-    config::save_game_ids(&updated)?;
-    Ok(updated)
+    let to_save = current.clone();
+    tokio::task::spawn_blocking(move || config::save_game_ids(&to_save))
+        .await
+        .map_err(|e| e.to_string())??;
+    *state.game_ids.lock().map_err(|e| e.to_string())? = current.clone();
+    Ok(fetched)
 }
 
 #[tauri::command]
@@ -350,24 +410,23 @@ async fn merge_non_steam_games(
         tokio::task::spawn_blocking(move || steam::load_non_steam_games(&userdata_path))
             .await
             .map_err(|e| e.to_string())??;
-    let (result, merged) = {
-        let mut game_ids = state.game_ids.lock().map_err(|e| e.to_string())?;
-        let mut merged = 0;
-        for (app_id, app_name) in &non_steam {
-            if !game_ids.contains_key(app_id) || game_ids.get(app_id) == Some(app_id) {
-                game_ids.insert(app_id.clone(), app_name.clone());
-                merged += 1;
-            }
+    let _guard = state.game_ids_save_lock.lock().await;
+    let mut updated = state.game_ids.lock().map_err(|e| e.to_string())?.clone();
+    let mut count = 0;
+    for (app_id, app_name) in &non_steam {
+        if !updated.contains_key(app_id) || updated.get(app_id) == Some(app_id) {
+            updated.insert(app_id.clone(), app_name.clone());
+            count += 1;
         }
-        (game_ids.clone(), merged)
-    };
-    if merged > 0 {
-        let snapshot = result.clone();
+    }
+    if count > 0 {
+        let snapshot = updated.clone();
         tokio::task::spawn_blocking(move || config::save_game_ids(&snapshot))
             .await
             .map_err(|e| e.to_string())??;
     }
-    Ok(result)
+    *state.game_ids.lock().map_err(|e| e.to_string())? = updated.clone();
+    Ok(updated)
 }
 
 #[tauri::command]
@@ -380,13 +439,34 @@ async fn convert_clips(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     if job_id.trim().is_empty() {
-        return Err("job_id must not be empty".to_string());
+        return Err("[EXPORT_ERR] job_id must not be empty".to_string());
     }
+    let export_path = std::path::Path::new(&export_dir);
+    if !export_path.exists() {
+        return Err(format!(
+            "[EXPORT_ERR] Export directory does not exist: {}",
+            export_dir
+        ));
+    }
+    let temp_file = export_path.join(format!(".rainy_write_test_{}", uuid::Uuid::new_v4()));
+    if let Err(e) = std::fs::write(&temp_file, b"test") {
+        return Err(format!(
+            "[EXPORT_ERR] Export directory is not writable: {}",
+            e
+        ));
+    }
+    let _ = std::fs::remove_file(temp_file);
     let cancelled = Arc::new(AtomicBool::new(false));
     {
-        let mut active = state.conversion_job.lock().map_err(|e| e.to_string())?;
+        let mut active = state
+            .conversion_job
+            .lock()
+            .map_err(|e| format!("[EXPORT_ERR] {}", e))?;
         if let Some(job) = active.as_ref() {
-            return Err(format!("Conversion job {} is already active", job.job_id));
+            return Err(format!(
+                "[EXPORT_ERR] Conversion job {} is already active",
+                job.job_id
+            ));
         }
         *active = Some(ConversionJob {
             job_id: job_id.clone(),
@@ -455,6 +535,12 @@ async fn convert_clips(
     } else {
         "completed"
     };
+    {
+        let mut active = state.conversion_job.lock().map_err(|e| e.to_string())?;
+        if active.as_ref().is_some_and(|job| job.job_id == job_id) {
+            *active = None;
+        }
+    }
     emit_conversion(
         &app_handle,
         ConversionEvent::JobFinished {
@@ -465,22 +551,21 @@ async fn convert_clips(
             failed,
         },
     );
-    let mut active = state.conversion_job.lock().map_err(|e| e.to_string())?;
-    if active.as_ref().is_some_and(|job| job.job_id == job_id) {
-        *active = None;
-    }
     Ok(())
 }
 
 #[tauri::command]
 fn cancel_conversion(job_id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let active = state.conversion_job.lock().map_err(|e| e.to_string())?;
+    let active = state
+        .conversion_job
+        .lock()
+        .map_err(|e| format!("[EXPORT_ERR] {}", e))?;
     let job = active
         .as_ref()
-        .ok_or_else(|| "No conversion job is active".to_string())?;
+        .ok_or_else(|| "[EXPORT_ERR] No conversion job is active".to_string())?;
     if job.job_id != job_id {
         return Err(format!(
-            "Active conversion job id does not match {}",
+            "[EXPORT_ERR] Active conversion job id does not match {}",
             job_id
         ));
     }
@@ -490,7 +575,7 @@ fn cancel_conversion(job_id: String, state: tauri::State<'_, AppState>) -> Resul
 
 #[tauri::command]
 async fn check_for_updates() -> Result<update::ReleaseInfo, String> {
-    Ok(update::check_latest_release().await?)
+    update::check_latest_release().await
 }
 
 #[tauri::command]
@@ -521,15 +606,27 @@ fn get_config_dir() -> Result<String, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let config = config::load_config().unwrap_or_default();
-    let game_ids = config::load_game_ids().unwrap_or_default();
+    let (config, config_error) = match config::load_config() {
+        Ok(c) => (c, None),
+        Err(e) => (config::AppConfig::default(), Some(e)),
+    };
+    let game_ids = match config::load_game_ids() {
+        Ok(ids) => ids,
+        Err(err) => {
+            log::error!("{}", err);
+            std::collections::HashMap::new()
+        }
+    };
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .manage(AppState {
             config: Mutex::new(config),
+            config_error: Mutex::new(config_error),
+            config_save_lock: tokio::sync::Mutex::new(()),
             game_ids: Mutex::new(game_ids),
+            game_ids_save_lock: tokio::sync::Mutex::new(()),
             conversion_job: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
@@ -539,6 +636,7 @@ pub fn run() {
             validate_userdata,
             list_steam_ids,
             list_clips,
+            list_clips_quick,
             get_clip_duration,
             generate_thumbnail,
             regenerate_thumbnail,

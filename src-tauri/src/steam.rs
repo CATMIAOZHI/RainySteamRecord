@@ -5,15 +5,63 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-pub fn find_steam_userdata() -> Option<String> {
-    let candidates: Vec<PathBuf> = vec![
-        PathBuf::from(r"C:\Program Files (x86)\Steam\userdata"),
-        PathBuf::from(r"C:\Program Files\Steam\userdata"),
-    ];
-    for path in &candidates {
-        if path.exists() && path.is_dir() {
-            return Some(path.to_string_lossy().to_string());
+fn find_steam_from_registry() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let output = std::process::Command::new("reg")
+            .args(["query", "HKCU\\Software\\Valve\\Steam", "/v", "SteamPath"])
+            .creation_flags(0x08000000)
+            .output();
+        if let Ok(out) = output {
+            if out.status.success() {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                for line in stdout.lines() {
+                    if line.contains("SteamPath") {
+                        let parts: Vec<&str> = line.split("REG_SZ").collect();
+                        if parts.len() > 1 {
+                            let path = parts[1].trim();
+                            let pb = PathBuf::from(path);
+                            if pb.exists() {
+                                return Some(pb);
+                            }
+                        }
+                    }
+                }
+            }
         }
+    }
+    None
+}
+
+fn find_steam_on_common_drives() -> Option<PathBuf> {
+    let drives = ["C", "D", "E", "F", "G", "H", "I"];
+    let subpaths = [
+        "Program Files (x86)\\Steam\\userdata",
+        "Program Files\\Steam\\userdata",
+        "Steam\\userdata",
+        "SteamLibrary\\userdata",
+    ];
+    for drive in &drives {
+        for subpath in &subpaths {
+            let path = PathBuf::from(format!("{}:\\{}", drive, subpath));
+            if validate_userdata(&path.to_string_lossy()) {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+pub fn find_steam_userdata() -> Option<String> {
+    if let Some(reg_path) = find_steam_from_registry() {
+        let userdata = reg_path.join("userdata");
+        if validate_userdata(&userdata.to_string_lossy()) {
+            return Some(userdata.to_string_lossy().to_string());
+        }
+    }
+    if let Some(path) = find_steam_on_common_drives() {
+        return Some(path.to_string_lossy().to_string());
     }
     None
 }
@@ -24,7 +72,7 @@ pub fn validate_userdata(folder: &str) -> bool {
         return false;
     }
     let basename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    if basename != "userdata" {
+    if !basename.eq_ignore_ascii_case("userdata") {
         return false;
     }
     if let Ok(entries) = std::fs::read_dir(path) {
@@ -173,6 +221,7 @@ fn get_case_insensitive(map: &HashMap<String, VdfValue>, key: &str) -> Option<St
 #[derive(Debug, Clone)]
 pub enum VdfValue {
     String(String),
+    #[allow(dead_code)]
     Int(u32),
     Map(HashMap<String, VdfValue>),
 }
@@ -278,27 +327,24 @@ pub async fn fetch_game_name(game_id: &str) -> String {
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
-    match client.get(&url).send().await {
-        Ok(resp) => {
-            if let Ok(json) = resp.json::<serde_json::Value>().await {
-                if let Some(data) = json.get(game_id) {
-                    if data
-                        .get("success")
-                        .and_then(|s| s.as_bool())
-                        .unwrap_or(false)
+    if let Ok(resp) = client.get(&url).send().await {
+        if let Ok(json) = resp.json::<serde_json::Value>().await {
+            if let Some(data) = json.get(game_id) {
+                if data
+                    .get("success")
+                    .and_then(|s| s.as_bool())
+                    .unwrap_or(false)
+                {
+                    if let Some(name) = data
+                        .get("data")
+                        .and_then(|d| d.get("name"))
+                        .and_then(|n| n.as_str())
                     {
-                        if let Some(name) = data
-                            .get("data")
-                            .and_then(|d| d.get("name"))
-                            .and_then(|n| n.as_str())
-                        {
-                            return name.to_string();
-                        }
+                        return name.to_string();
                     }
                 }
             }
         }
-        Err(_) => {}
     }
     game_id.to_string()
 }

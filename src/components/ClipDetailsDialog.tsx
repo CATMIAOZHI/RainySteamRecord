@@ -39,6 +39,6 @@ export default function ClipDetailsDialog({ clip, onClose }: { clip: ClipInfo; o
 }
 
 export function HealthBadge({ status }: { status: ClipInfo["health_status"] }) {
-  const color = status === "healthy" ? "var(--success)" : status === "warning" ? "var(--warning)" : "var(--danger)";
+  const color = status === "checking" ? "var(--text-muted)" : status === "healthy" ? "var(--success)" : status === "warning" ? "var(--warning)" : "var(--danger)";
   return <span className="h-2.5 w-2.5 rounded-full" style={{ background: color, boxShadow: `0 0 0 3px color-mix(in srgb, ${color} 20%, transparent)` }} />;
 }

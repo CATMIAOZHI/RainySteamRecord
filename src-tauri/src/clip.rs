@@ -8,9 +8,15 @@ use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 use tokio::sync::Semaphore;
 
-static THUMB_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(2));
+static THUMB_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| {
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    let limit = (cores / 2).clamp(1, 4);
+    Semaphore::new(limit)
+});
 static CACHE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
-const CACHE_VERSION: u32 = 3;
+const CACHE_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct ClipsCacheEntry {
@@ -302,6 +308,11 @@ fn build_clip(
             Err(_) => issues.push(issue("invalid-session-mpd", path)),
         }
     }
+    if duration_seconds <= 0.0 {
+        if let Ok(stream_info) = crate::streaming::get_clip_stream_info(&folder) {
+            duration_seconds = stream_info.duration_seconds;
+        }
+    }
     let health_status = if mpd_paths.is_empty()
         || duration_seconds <= 0.0
         || issues.iter().any(|value| {
@@ -341,6 +352,147 @@ fn build_clip(
     }
 }
 
+fn quick_mpd_paths(folder: &Path) -> Vec<PathBuf> {
+    crate::streaming::find_session_mpd_paths(&folder.to_string_lossy())
+}
+
+fn build_quick_clip(
+    folder: String,
+    media_type: String,
+    game_ids: &HashMap<String, String>,
+) -> ClipInfo {
+    let folder_name = Path::new(&folder)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("")
+        .to_string();
+    let game_id = folder_name
+        .split('_')
+        .nth(1)
+        .unwrap_or("Unknown")
+        .to_string();
+    let mut duration_seconds = 0.0;
+    let mut width = None;
+    let mut height = None;
+    let mut video_codec = None;
+    let mut audio_codec = None;
+    let mut frame_rate = None;
+    let mpd_paths = quick_mpd_paths(Path::new(&folder));
+    for path in &mpd_paths {
+        if let Ok(metadata) = std::fs::read_to_string(path)
+            .map_err(|error| error.to_string())
+            .and_then(|content| crate::streaming::parse_mpd_metadata(&content))
+        {
+            duration_seconds += metadata.duration_seconds;
+            width = width.or(metadata.width);
+            height = height.or(metadata.height);
+            video_codec = video_codec.or(metadata.video_codec);
+            audio_codec = audio_codec.or(metadata.audio_codec);
+            frame_rate = frame_rate.or(metadata.frame_rate);
+        }
+    }
+    ClipInfo {
+        folder,
+        folder_name: folder_name.clone(),
+        game_name: game_ids
+            .get(&game_id)
+            .cloned()
+            .unwrap_or_else(|| game_id.clone()),
+        game_id,
+        datetime: folder_datetime(&folder_name).map(|value| value.0),
+        duration: format!(
+            "{}:{:02}",
+            (duration_seconds / 60.0) as u64,
+            (duration_seconds % 60.0) as u64
+        ),
+        duration_seconds,
+        size_bytes: 0,
+        width,
+        height,
+        video_codec,
+        audio_codec,
+        frame_rate,
+        session_count: mpd_paths.len(),
+        health_status: "checking".to_string(),
+        issues: Vec::new(),
+        media_type,
+    }
+}
+
+fn clip_folders(userdata_path: &str, steam_id: &str, media_type: &str) -> Vec<(String, String)> {
+    let userdata_dir = Path::new(userdata_path).join(steam_id);
+    let custom_path = crate::steam::get_custom_record_path(&userdata_dir.to_string_lossy());
+    let roots = [
+        (userdata_dir.join("gamerecordings/clips"), "manual"),
+        (userdata_dir.join("gamerecordings/video"), "background"),
+    ];
+    let custom_roots = custom_path.into_iter().flat_map(|path| {
+        let path = PathBuf::from(path);
+        [
+            (path.join("clips"), "manual"),
+            (path.join("video"), "background"),
+        ]
+    });
+    roots
+        .into_iter()
+        .chain(custom_roots)
+        .filter(|(_, kind)| media_type == "all" || media_type == *kind)
+        .flat_map(|(root, kind)| {
+            std::fs::read_dir(root)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter_map(move |entry| {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    (name.contains('_') && entry.path().is_dir())
+                        .then(|| (entry.path().to_string_lossy().to_string(), kind.to_string()))
+                })
+        })
+        .collect()
+}
+
+pub fn list_clips_quick(
+    userdata_path: &str,
+    steam_id: &str,
+    media_type: &str,
+    game_ids: &HashMap<String, String>,
+) -> Result<Vec<ClipInfo>, String> {
+    let key = cache_key(userdata_path, steam_id, media_type);
+    let cached = {
+        let _guard = CACHE_LOCK.lock().map_err(|error| error.to_string())?;
+        read_clips_cache()
+            .entries
+            .get(&key)
+            .cloned()
+            .unwrap_or_default()
+            .clips
+    };
+    let mut clips: Vec<_> = clip_folders(userdata_path, steam_id, media_type)
+        .into_iter()
+        .map(|(folder, media_type)| {
+            let mut clip = cached
+                .get(&folder)
+                .map(|cached| cached.clip.clone())
+                .unwrap_or_else(|| build_quick_clip(folder, media_type, game_ids));
+            clip.game_name = game_ids
+                .get(&clip.game_id)
+                .cloned()
+                .unwrap_or_else(|| clip.game_id.clone());
+            clip
+        })
+        .collect();
+    sort_clips(&mut clips);
+    Ok(clips)
+}
+
+fn sort_clips(clips: &mut [ClipInfo]) {
+    clips.sort_by(|a, b| {
+        let dt_a = a.datetime.as_deref().unwrap_or("");
+        let dt_b = b.datetime.as_deref().unwrap_or("");
+        dt_b.cmp(dt_a)
+    });
+}
+
 pub fn list_clips(
     userdata_path: &str,
     steam_id: &str,
@@ -348,94 +500,7 @@ pub fn list_clips(
     game_ids: &HashMap<String, String>,
     use_cache: bool,
 ) -> Result<Vec<ClipInfo>, String> {
-    let userdata_dir = Path::new(userdata_path).join(steam_id);
-    let custom_path = crate::steam::get_custom_record_path(&userdata_dir.to_string_lossy());
-
-    let clips_dir_default = userdata_dir.join("gamerecordings").join("clips");
-    let video_dir_default = userdata_dir.join("gamerecordings").join("video");
-    let clips_dir_custom = custom_path.as_ref().map(|p| Path::new(p).join("clips"));
-    let video_dir_custom = custom_path.as_ref().map(|p| Path::new(p).join("video"));
-
-    let mut clip_folders = Vec::new();
-    let mut video_folders = Vec::new();
-
-    if clips_dir_default.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(&clips_dir_default) {
-            for entry in entries.flatten() {
-                if entry.path().is_dir() {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    if name.contains('_') {
-                        clip_folders.push((
-                            entry.path().to_string_lossy().to_string(),
-                            "manual".to_string(),
-                        ));
-                    }
-                }
-            }
-        }
-    }
-    if video_dir_default.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(&video_dir_default) {
-            for entry in entries.flatten() {
-                if entry.path().is_dir() {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    if name.contains('_') {
-                        video_folders.push((
-                            entry.path().to_string_lossy().to_string(),
-                            "background".to_string(),
-                        ));
-                    }
-                }
-            }
-        }
-    }
-    if let Some(ref custom_clips) = clips_dir_custom {
-        if custom_clips.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(custom_clips) {
-                for entry in entries.flatten() {
-                    if entry.path().is_dir() {
-                        let name = entry.file_name().to_string_lossy().to_string();
-                        if name.contains('_') {
-                            clip_folders.push((
-                                entry.path().to_string_lossy().to_string(),
-                                "manual".to_string(),
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-    }
-    if let Some(ref custom_video) = video_dir_custom {
-        if custom_video.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(custom_video) {
-                for entry in entries.flatten() {
-                    if entry.path().is_dir() {
-                        let name = entry.file_name().to_string_lossy().to_string();
-                        if name.contains('_') {
-                            video_folders.push((
-                                entry.path().to_string_lossy().to_string(),
-                                "background".to_string(),
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    let all_clips: Vec<(String, String)> = match media_type {
-        "all" => clip_folders
-            .into_iter()
-            .chain(video_folders.into_iter())
-            .collect(),
-        "manual" => clip_folders,
-        "background" => video_folders,
-        _ => clip_folders
-            .into_iter()
-            .chain(video_folders.into_iter())
-            .collect(),
-    };
+    let all_clips = clip_folders(userdata_path, steam_id, media_type);
 
     let key = cache_key(userdata_path, steam_id, media_type);
     let old_clips = if use_cache {
@@ -480,21 +545,15 @@ pub fn list_clips(
         })
         .collect();
 
-    clips.sort_by(|a, b| {
-        let dt_a = a.datetime.as_ref().map(|s| s.as_str()).unwrap_or("");
-        let dt_b = b.datetime.as_ref().map(|s| s.as_str()).unwrap_or("");
-        dt_b.cmp(dt_a)
-    });
+    sort_clips(&mut clips);
 
-    if use_cache {
-        let _guard = CACHE_LOCK.lock().map_err(|e| e.to_string())?;
-        let mut cache = read_clips_cache();
-        cache
-            .entries
-            .insert(key, ClipsCacheEntry { clips: new_cached });
-        if let Err(error) = write_clips_cache(&cache) {
-            log::warn!("Failed to write clip cache: {}", error);
-        }
+    let _guard = CACHE_LOCK.lock().map_err(|e| e.to_string())?;
+    let mut cache = read_clips_cache();
+    cache
+        .entries
+        .insert(key, ClipsCacheEntry { clips: new_cached });
+    if let Err(error) = write_clips_cache(&cache) {
+        log::warn!("Failed to write clip cache: {}", error);
     }
 
     Ok(clips)
@@ -571,7 +630,7 @@ pub async fn generate_thumbnail(clip_folder: &str) -> Result<Option<String>, Str
 
 #[cfg(test)]
 mod tests {
-    use super::{build_clip, folder_datetime, inspect_folder};
+    use super::{build_clip, build_quick_clip, folder_datetime, inspect_folder};
     use std::collections::HashMap;
 
     #[test]
@@ -684,6 +743,24 @@ mod tests {
             .issues
             .iter()
             .any(|value| value.starts_with("invalid-session-mpd:")));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn quick_clip_reads_mpd_without_inspecting_segments() {
+        let root = std::env::temp_dir().join(format!("rainy-quick-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("session.mpd"), r#"<MPD mediaPresentationDuration="PT12S"><Period><AdaptationSet contentType="video" codecs="avc1"><Representation width="1280" height="720" /></AdaptationSet></Period></MPD>"#).unwrap();
+        std::fs::write(root.join("chunk-stream0-00001.m4s"), [1u8; 32]).unwrap();
+        let clip = build_quick_clip(
+            root.to_string_lossy().to_string(),
+            "manual".to_string(),
+            &HashMap::new(),
+        );
+        assert_eq!(clip.duration_seconds, 12.0);
+        assert_eq!(clip.size_bytes, 0);
+        assert_eq!(clip.health_status, "checking");
+        assert!(clip.issues.is_empty());
         std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -25,7 +25,7 @@ All backend logic is in Rust (no Node sidecar). Zustand owns library, selection,
 | Desktop shell + backend | Tauri 2 (Rust) | `src-tauri/src/` |
 | Frontend | React 19 + TypeScript + Vite | `src/` |
 | Styling | Tailwind CSS + CSS variables (14 themes) | `src/styles/` |
-| State | Zustand | `src/stores/app.ts` |
+| State | Zustand | `src/stores/app.ts`, `src/stores/export-jobs.ts`, `src/stores/toast.ts` |
 | i18n | i18next + react-i18next | `locales/`, `src/lib/i18n.ts` |
 
 ## Rust Backend Modules
@@ -45,12 +45,15 @@ All backend logic is in Rust (no Node sidecar). Zustand owns library, selection,
 
 | Function | Module | Purpose |
 |----------|--------|---------|
-| `find_session_mpd_paths` | `streaming.rs` | Recursive walk to find all `session.mpd` files — shared by `ffmpeg.rs` and `streaming.rs` |
+| `find_session_mpd_paths` | `streaming.rs` | Recursive walk (depth-limited at 16) to find all `session.mpd` files — shared by `ffmpeg.rs` and `streaming.rs` |
 | `get_clip_stream_info` | `streaming.rs` | Parse MPD XML → codec strings, durations, chunk file paths per session |
-| `read_segment_bytes` | `streaming.rs` | Read a size-limited m4s segment as raw bytes |
+| `read_segment_bytes` | `streaming.rs` | Read a size-limited m4s segment as raw bytes — validates file name (`chunk-stream*` / `init-stream*`, `.m4s`) |
 | `merge_clip_to_file` | `ffmpeg.rs` | Shared by `convert_single_clip` (export) and `prepare_preview` (FFmpeg fallback) |
+| `reserve_unique_filename` | `ffmpeg.rs` | Token-based output file reservation — writes UUID token to placeholder file |
+| `commit_output` | `ffmpeg.rs` | Atomically replace reserved file via `MoveFileExW`; verifies token before replacing |
 | `prepare_preview` | `ffmpeg.rs` | Sync fn, wrapped in `spawn_blocking` at command layer |
 | `convert_single_clip` | `ffmpeg.rs` | Async, uses `spawn_blocking` for blocking FFmpeg I/O |
+| `replace_file` | `config.rs`, `clip.rs`, `ffmpeg.rs` | Windows atomic file replacement via `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING` |
 
 ## Frontend Components
 
@@ -89,7 +92,10 @@ All backend logic is in Rust (no Node sidecar). Zustand owns library, selection,
 
 - `list_clips` returns complete clip metadata, aggregate byte size, health status/issues, and uses the versioned per-library fingerprint cache unless a forced refresh disables it.
 - Clip management supports single and batch thumbnail regeneration and recycle-bin deletion; batch commands return per-item successes and failures.
-- `convert_clips(job_id, ...)` emits tagged `conversion-event` lifecycle events (`job-started`, per-item started/succeeded/failed, `job-finished`); cancellation is job-ID scoped and only one backend conversion job may run at once.
+- `convert_clips(job_id, ...)` emits tagged `conversion-event` lifecycle events (`job-started`, per-item started/succeeded/failed, `job-finished`); cancellation is job-ID scoped and only one backend conversion job may run at once. The active job slot is cleared **before** `job-finished` is emitted so a new job can start immediately.
+- Export output uses token-based file reservation: `reserve_unique_filename` creates a placeholder with a random UUID token; `commit_output` verifies the token before atomically replacing via `MoveFileExW`; failed commits clean up both the temp file and the reservation.
+- Cancellation is checked right before the final `commit_output` rename, so a cancelled job never produces output.
+- `cleanup_preview` only deletes files matching `rainy_preview_*.mp4` inside `%TEMP%`.
 - Preview commands expose MSE stream metadata/segments, native mpv launch, and FFmpeg temporary-file fallback.
 
 ## Steam Recording File Structure
@@ -107,8 +113,8 @@ clip_folder/
 
 - Files are **directly in the clip folder root** (not subdirectories)
 - `session.mpd` contains codec strings: H.264 (`avc1.*`) or HEVC (`hev1.*`) for video, `mp4a.40.2` for audio
-- `find_session_mpd_paths()` in `streaming.rs` does recursive walk to find all `session.mpd` files (shared by ffmpeg.rs)
-- Multi-session clips (multiple `session.mpd`) are rare but supported
+- `find_session_mpd_paths()` in `streaming.rs` does recursive walk (depth limit 16) to find all `session.mpd` files (shared by ffmpeg.rs and mpv.rs)
+- Multi-session clips (multiple `session.mpd`) are rare but supported; mpv launches all MPDs as a playlist
 
 ## Themes (14 total, Rainy is default)
 
@@ -167,6 +173,8 @@ In `ffmpeg_path()`:
 - **Commit messages**: concise, descriptive
 - **All `std::process::Command`** on Windows must use `CREATE_NO_WINDOW` (`0x08000000`) via `creation_flags()` to avoid flashing console windows
 - **All long-lived FFmpeg/mpv children** must be assigned to `ProcessJob`; failure to assign must terminate the child immediately
+- **Windows atomic file replacement** must use `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING` (via the `replace_file` helper) — `std::fs::rename` does NOT overwrite existing files on Windows
+- **AppState locks**: `config_save_lock` and `game_ids_save_lock` are separate `tokio::sync::Mutex<()>` that serialize write-to-disk operations; the sync `config` and `game_ids` `std::sync::Mutex` fields protect in-memory data. `get_config` uses `blocking_lock()` on `config_save_lock` (safe only because Tauri commands run on a thread-pool, not the async runtime's main thread)
 - **Run lint + typecheck** before considering a task complete
 - **README style**: Rainy family format with 🐱, 🌸 emojis, feature tables, architecture diagrams
 

@@ -49,6 +49,7 @@ interface ExportJobsState {
   start: (folders: string[], exportDir: string, gameIds: GameIds) => Promise<void>;
   cancel: (jobId: string) => Promise<void>;
   retryFailed: (jobId: string, gameIds: GameIds) => Promise<void>;
+  removeJob: (jobId: string) => void;
   handleEvent: (event: ConversionEvent) => void;
 }
 
@@ -95,12 +96,53 @@ export const useExportJobs = create<ExportJobsState>((set, get) => ({
   retryFailed: async (jobId, gameIds) => {
     const job = get().jobs.find((item) => item.id === jobId);
     if (!job) return;
-    const folders = job.items.filter((item) => item.status === "failed").map((item) => item.clipFolder);
-    await get().start(folders, job.exportDir, gameIds);
+    if (get().jobs.some((j) => j.status === "queued" || j.status === "running")) {
+      toast(i18n.t("exportJobs.alreadyRunning"), "info");
+      set({ panelOpen: true });
+      return;
+    }
+    const failedItems = job.items.filter((item) => item.status === "failed");
+    const folders = failedItems.map((item) => item.clipFolder);
+    if (!folders.length) return;
+
+    const newId = newJobId();
+    const newJob: ExportJob = {
+      id: newId,
+      createdAt: Date.now(),
+      exportDir: job.exportDir,
+      status: "queued",
+      items: folders.map((clipFolder) => ({ clipFolder, status: "queued" as const })),
+    };
+    set((state) => ({ jobs: [newJob, ...state.jobs], panelOpen: true }));
+
+    try {
+      await tauriBridge.convertClips(newId, folders, job.exportDir, gameIds);
+    } catch (error) {
+      set((state) => ({
+        jobs: state.jobs.map((j) =>
+          j.id === newId
+            ? {
+                ...j,
+                status: "failed",
+                error: String(error),
+                items: j.items.map((entry) =>
+                  entry.status === "queued" ? { ...entry, status: "failed", error: String(error) } : entry
+                ),
+              }
+            : j
+        ),
+      }));
+      toast(String(error), "error");
+    }
+  },
+  removeJob: (jobId) => {
+    set((state) => ({ jobs: state.jobs.filter((job) => job.id !== jobId) }));
   },
   handleEvent: (event) => {
     set((state) => ({ jobs: state.jobs.map((job) => reduceConversionEvent(job, event)) }));
     if (event.type !== "job-finished") return;
+    const jobExists = get().jobs.some((job) => job.id === event.job_id);
+    if (!jobExists) return;
     if (event.status === "cancelled") toast(i18n.t("exportJobs.cancelledSummary", { succeeded: event.succeeded, total: event.total }), "info");
     else if (event.failed > 0) toast(i18n.t("exportJobs.partialSummary", { succeeded: event.succeeded, failed: event.failed }), "error");
     else toast(i18n.t("exportJobs.successSummary", { count: event.succeeded }), "success");

@@ -54,17 +54,16 @@ pub(crate) fn segment_sort(a: &str, b: &str) -> std::cmp::Ordering {
 }
 
 pub fn find_session_mpd_paths(clip_folder: &str) -> Vec<PathBuf> {
-    let root_mpd = Path::new(clip_folder).join("session.mpd");
-    if root_mpd.is_file() {
-        return vec![root_mpd];
-    }
     let mut files = Vec::new();
-    fn walk_dir(dir: &Path, files: &mut Vec<PathBuf>) {
+    fn walk_dir(dir: &Path, files: &mut Vec<PathBuf>, depth: u32) {
+        if depth > 16 {
+            return;
+        }
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_dir() {
-                    walk_dir(&path, files);
+                    walk_dir(&path, files, depth + 1);
                 } else if path
                     .file_name()
                     .map(|n| n == "session.mpd")
@@ -75,7 +74,7 @@ pub fn find_session_mpd_paths(clip_folder: &str) -> Vec<PathBuf> {
             }
         }
     }
-    walk_dir(Path::new(clip_folder), &mut files);
+    walk_dir(Path::new(clip_folder), &mut files, 0);
     files.sort();
     files
 }
@@ -121,8 +120,19 @@ fn extract_codec(mpd_content: &str, content_type: &str) -> Option<String> {
 
 fn extract_attribute(content: &str, name: &str) -> Option<String> {
     let marker = format!("{}=\"", name);
-    let rest = content.split_once(&marker)?.1;
-    Some(rest.split_once('"')?.0.to_string())
+    let mut offset = 0;
+    while let Some(index) = content[offset..].find(&marker) {
+        let start = offset + index;
+        if start == 0
+            || content.as_bytes()[start - 1].is_ascii_whitespace()
+            || content.as_bytes()[start - 1] == b'<'
+        {
+            let rest = &content[start + marker.len()..];
+            return Some(rest.split_once('"')?.0.to_string());
+        }
+        offset = start + marker.len();
+    }
+    None
 }
 
 pub(crate) fn parse_iso8601_duration(value: &str) -> f64 {
@@ -326,6 +336,13 @@ pub fn get_clip_stream_info(clip_folder: &str) -> Result<ClipStreamInfo, String>
 
 pub fn read_segment_bytes(file_path: &str) -> Result<Vec<u8>, String> {
     const MAX_SEGMENT_SIZE: u64 = 64 * 1024 * 1024;
+    let path = Path::new(file_path);
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if !file_name.ends_with(".m4s")
+        || (!file_name.starts_with("chunk-stream") && !file_name.starts_with("init-stream"))
+    {
+        return Err("Invalid segment file".to_string());
+    }
     let size = fs::metadata(file_path)
         .map_err(|e| format!("Failed to inspect segment: {}", e))?
         .len();
@@ -363,6 +380,15 @@ mod tests {
         assert_eq!(metadata.video_codec.as_deref(), Some("hev1.1.6.L93"));
         assert_eq!(metadata.audio_codec.as_deref(), Some("mp4a.40.2"));
         assert_eq!(metadata.duration_seconds, 62.5);
+    }
+
+    #[test]
+    fn does_not_parse_bandwidth_as_width() {
+        let metadata = parse_mpd_metadata(r#"<MPD type="dynamic"><Period><AdaptationSet contentType="video" maxWidth="1600" maxHeight="1200"><Representation mimeType="video/mp4" codecs="avc1.64002a" bandwidth="12000000" width="1600" height="1200" /></AdaptationSet><AdaptationSet contentType="audio"><Representation mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="128000" /></AdaptationSet></Period></MPD>"#).unwrap();
+        assert_eq!(metadata.width, Some(1600));
+        assert_eq!(metadata.height, Some(1200));
+        assert_eq!(metadata.frame_rate, None);
+        assert_eq!(metadata.video_codec.as_deref(), Some("avc1.64002a"));
     }
 
     #[test]

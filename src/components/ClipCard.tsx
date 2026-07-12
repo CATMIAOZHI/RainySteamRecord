@@ -173,7 +173,8 @@ function ClipCard({ clip, onPreview, onDetails, orderedFolders }: { clip: ClipIn
           <div className="my-1 border-t border-border" />
           <button disabled={busy} className="w-full rounded-md px-3 py-2 text-left text-sm text-text hover:bg-surface-hover disabled:opacity-40" onClick={() => void regenerateThumbnail()}>{t("contextMenu.regenerateThumbnail")}</button>
           <button className="w-full rounded-md px-3 py-2 text-left text-sm text-text hover:bg-surface-hover" onClick={() => { setContextMenu(null); setRenameValue(gameIds[clip.game_id] || clip.game_name); }}>{t("contextMenu.renameGame")}</button>
-          <button className="w-full rounded-md px-3 py-2 text-left text-sm text-text hover:bg-surface-hover" onClick={() => { setContextMenu(null); void loadClips(); }}>{t("contextMenu.refresh")}</button>
+          <button className="w-full rounded-md px-3 py-2 text-left text-sm text-text hover:bg-surface-hover" onClick={() => { setContextMenu(null); void loadClips({ force: false }); }}>{t("contextMenu.refreshCache")}</button>
+          <button className="w-full rounded-md px-3 py-2 text-left text-sm text-text hover:bg-surface-hover" onClick={() => { setContextMenu(null); void loadClips({ force: true }); }}>{t("contextMenu.refresh")}</button>
           <div className="my-1 border-t border-border" />
           <button className="w-full rounded-md px-3 py-2 text-left text-sm text-text hover:bg-surface-hover" onClick={() => { setContextMenu(null); void tauriBridge.openFolder(clip.folder); }}>{t("common.openFileLocation")}</button>
           <button className="w-full rounded-md px-3 py-2 text-left text-sm text-text hover:bg-surface-hover" onClick={() => { setContextMenu(null); void navigator.clipboard.writeText(clip.folder).then(() => toast(t("messages.pathCopied"), "success")); }}>{t("contextMenu.copyPath")}</button>

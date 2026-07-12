@@ -28,10 +28,10 @@ fn mpv_path() -> Result<PathBuf, String> {
 }
 
 pub fn open_preview(clip_folder: &str, title: &str) -> Result<(), String> {
-    let mpd = crate::streaming::find_session_mpd_paths(clip_folder)
-        .into_iter()
-        .next()
-        .ok_or_else(|| "No session.mpd files found".to_string())?;
+    let mpd_paths = crate::streaming::find_session_mpd_paths(clip_folder);
+    if mpd_paths.is_empty() {
+        return Err("No session.mpd files found".to_string());
+    }
     let mut command = Command::new(mpv_path()?);
     command
         .args([
@@ -44,8 +44,11 @@ pub fn open_preview(clip_folder: &str, title: &str) -> Result<(), String> {
             "--osd-level=1",
             "--no-terminal",
         ])
-        .arg(format!("--title={title}"))
-        .arg(mpd)
+        .arg(format!("--title={title}"));
+    for mpd in &mpd_paths {
+        command.arg(mpd);
+    }
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());

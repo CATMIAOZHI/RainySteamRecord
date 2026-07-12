@@ -41,4 +41,5 @@ pub async fn check_latest_release() -> Result<ReleaseInfo, String> {
     })
 }
 
+#[allow(dead_code)]
 pub const CURRENT_VERSION: &str = "v0.2.0";

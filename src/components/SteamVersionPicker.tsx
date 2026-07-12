@@ -2,31 +2,59 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { tauriBridge } from "../lib/tauri-bridge";
 import { useOverlay } from "../lib/overlay";
+import { useStore } from "../stores/app";
 
-export default function SteamVersionPicker({ onSelect }: { onSelect: (path: string) => void }) {
+export default function SteamVersionPicker() {
   const { t } = useTranslation();
-  const [error, setError] = useState("");
+  const [localError, setLocalError] = useState("");
+  const [busy, setBusy] = useState(false);
   useOverlay(() => {});
 
+  const initializationStatus = useStore((state) => state.initializationStatus);
+  const initializationError = useStore((state) => state.initializationError);
+  const saveUserdataPath = useStore((state) => state.saveUserdataPath);
+
+  const isSaving = initializationStatus === "saving-userdata";
+  const isBusy = isSaving || busy;
+  const displayError = localError || initializationError;
+
   const handleStandard = async () => {
-    const path = await tauriBridge.findSteamUserdata();
-    if (path) {
-      onSelect(path);
-    } else {
-      setError(t("messages.noSteamFound"));
+    if (isBusy) return;
+    setBusy(true);
+    setLocalError("");
+    try {
+      const path = await tauriBridge.findSteamUserdata();
+      if (path) {
+        await saveUserdataPath(path);
+      } else {
+        setLocalError(t("messages.noSteamFound"));
+      }
+    } catch (e) {
+      setLocalError(String(e));
+    } finally {
+      setBusy(false);
     }
   };
 
   const handleManual = async () => {
-    const { open } = await import("@tauri-apps/plugin-dialog");
-    const selected = await open({ directory: true });
-    if (selected && typeof selected === "string") {
-      const valid = await tauriBridge.validateUserdata(selected);
-      if (valid) {
-        onSelect(selected);
-      } else {
-        setError(t("steamVersion.invalid"));
+    if (isBusy) return;
+    setBusy(true);
+    setLocalError("");
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({ directory: true });
+      if (selected && typeof selected === "string") {
+        const valid = await tauriBridge.validateUserdata(selected);
+        if (valid) {
+          await saveUserdataPath(selected);
+        } else {
+          setLocalError(t("steamVersion.invalid"));
+        }
       }
+    } catch (e) {
+      setLocalError(String(e));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -38,18 +66,20 @@ export default function SteamVersionPicker({ onSelect }: { onSelect: (path: stri
         <div className="flex flex-col gap-3">
           <button
             onClick={handleStandard}
-            className="h-11 w-full rounded-lg bg-accent text-sm font-semibold text-white hover:bg-accent-hover"
+            disabled={isBusy}
+            className="h-11 w-full rounded-lg bg-accent text-sm font-semibold text-white hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {t("steamVersion.standard")}
+            {isBusy ? t("initialization.savingUserdata") : t("steamVersion.standard")}
           </button>
           <button
             onClick={handleManual}
-            className="h-11 w-full rounded-lg border border-border bg-surface-2 text-sm text-text hover:bg-surface-hover"
+            disabled={isBusy}
+            className="h-11 w-full rounded-lg border border-border bg-surface-2 text-sm text-text hover:bg-surface-hover disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {t("steamVersion.manual")}
           </button>
         </div>
-        {error && <p className="mt-3 text-sm text-danger">{error}</p>}
+        {displayError && <p className="mt-3 text-sm text-danger">{displayError}</p>}
       </div>
     </div>
   );

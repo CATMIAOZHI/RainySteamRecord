@@ -17,6 +17,7 @@ export default function ExportJobCenter() {
   const setOpen = useExportJobs((state) => state.setPanelOpen);
   const cancel = useExportJobs((state) => state.cancel);
   const retryFailed = useExportJobs((state) => state.retryFailed);
+  const removeJob = useExportJobs((state) => state.removeJob);
   const gameIds = useStore((state) => state.gameIds);
   useOverlay(() => setOpen(false), open);
   if (!open) return null;
@@ -35,7 +36,21 @@ export default function ExportJobCenter() {
             const active = job.status === "queued" || job.status === "running";
             return <section key={job.id} className="overflow-hidden rounded-2xl border border-border bg-surface-2">
               <div className="border-b border-border p-4">
-                <div className="flex items-center justify-between gap-3"><span className="text-sm font-semibold text-text">{t(`exportJobs.status.${job.status}`)}</span><span className="text-xs text-text-muted">{done}/{job.items.length}</span></div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-semibold text-text">{t(`exportJobs.status.${job.status}`)}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-text-muted">{done}/{job.items.length}</span>
+                    {!active && (
+                      <button
+                        onClick={() => removeJob(job.id)}
+                        className="flex h-5 w-5 items-center justify-center rounded text-xs text-text-muted hover:bg-surface hover:text-text"
+                        title={t("common.clear")}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                </div>
                 <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface"><div className="h-full rounded-full bg-accent transition-all" style={{ width: `${job.items.length ? done / job.items.length * 100 : 0}%` }} /></div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {active && <button className="rounded-lg border border-red-500/40 px-3 py-1.5 text-xs text-red-500 hover:bg-red-500/10" onClick={() => void cancel(job.id)}>{t("exportJobs.cancel")}</button>}

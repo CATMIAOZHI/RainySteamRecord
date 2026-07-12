@@ -91,11 +91,36 @@ export default function VideoPreviewDialog({
   const fallbackReadyRef = useRef(false);
   const seekTargetRef = useRef<number | null>(null);
   const restartingMseRef = useRef(false);
+  const seekTimerRef = useRef<number | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [usingFallback, setUsingFallback] = useState(false);
   const [fallbackUrl, setFallbackUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const video = videoRef.current;
+      if (!video) return;
+      if (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA") return;
+      if (event.key === " ") {
+        event.preventDefault();
+        if (video.paused) {
+          video.play().catch(() => {});
+        } else {
+          video.pause();
+        }
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        video.currentTime = Math.max(0, video.currentTime - 5);
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        video.currentTime = Math.min(video.duration || 0, video.currentTime + 5);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const disposeMse = useCallback(() => {
     const ms = mediaSourceRef.current;
@@ -408,6 +433,10 @@ export default function VideoPreviewDialog({
       playbackGenerationRef.current++;
       disposeMse();
       feedStateRef.current = createFeedState();
+      if (seekTimerRef.current !== null) {
+        window.clearTimeout(seekTimerRef.current);
+        seekTimerRef.current = null;
+      }
       if (fallbackPathRef.current) {
         tauriBridge.cleanupPreview(fallbackPathRef.current).catch(() => {});
         fallbackPathRef.current = null;
@@ -452,15 +481,23 @@ export default function VideoPreviewDialog({
     const onSeeking = () => {
       const info = streamInfoRef.current;
       const target = video.currentTime;
-      if (!info || restartingMseRef.current || bufferedAt(video, target)) return;
-      const generation = ++playbackGenerationRef.current;
-      restartingMseRef.current = true;
-      seekTargetRef.current = target;
-      disposeMse();
-      const state = createFeedStateAt(info, target);
-      feedStateRef.current = state;
-      void startMsePlayback(info, generation, getBufferStart(info, state), target)
-        .catch((e) => fallbackToFFmpeg(String(e)));
+      if (restartingMseRef.current) return;
+      if (seekTimerRef.current !== null) {
+        window.clearTimeout(seekTimerRef.current);
+        seekTimerRef.current = null;
+      }
+      if (!info || bufferedAt(video, target)) return;
+      seekTimerRef.current = window.setTimeout(() => {
+        seekTimerRef.current = null;
+        const generation = ++playbackGenerationRef.current;
+        restartingMseRef.current = true;
+        seekTargetRef.current = target;
+        disposeMse();
+        const state = createFeedStateAt(info, target);
+        feedStateRef.current = state;
+        void startMsePlayback(info, generation, getBufferStart(info, state), target)
+          .catch((e) => fallbackToFFmpeg(String(e)));
+      }, 150);
     };
     const onProgress = () => {
       const target = seekTargetRef.current;
@@ -474,6 +511,9 @@ export default function VideoPreviewDialog({
     video.addEventListener("progress", onProgress);
     video.addEventListener("canplay", onProgress);
     return () => {
+      if (seekTimerRef.current !== null) {
+        window.clearTimeout(seekTimerRef.current);
+      }
       video.removeEventListener("seeking", onSeeking);
       video.removeEventListener("progress", onProgress);
       video.removeEventListener("canplay", onProgress);
@@ -535,6 +575,15 @@ export default function VideoPreviewDialog({
             src={usingFallback ? fallbackUrl ?? undefined : undefined}
             controls
             autoPlay
+            onDoubleClick={() => {
+              const video = videoRef.current;
+              if (!video) return;
+              if (!document.fullscreenElement) {
+                video.requestFullscreen().catch(() => {});
+              } else {
+                document.exitFullscreen().catch(() => {});
+              }
+            }}
             className={`h-full w-full ${loading || error ? "invisible" : ""}`}
           />
           {loading ? (

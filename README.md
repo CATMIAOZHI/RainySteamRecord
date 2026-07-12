@@ -119,9 +119,14 @@ RainySteamRecord/
 │   ├── lib/
 │   │   ├── tauri-bridge.ts  # 类型化 invoke 封装
 │   │   ├── theme.ts         # 14 主题管理
-│   │   └── i18n.ts          # i18next 配置
+│   │   ├── i18n.ts          # i18next 配置
+│   │   ├── clip-library.ts  # 查询、排序、筛选逻辑
+│   │   ├── thumbnail-cache.ts # 内存缩略图缓存
+│   │   └── overlay.ts       # 弹窗注册与 Esc 关闭
 │   └── stores/
-│       └── app.ts           # Zustand 全局状态
+│       ├── app.ts           # Zustand 全局状态（初始化、录像库、选择）
+│       ├── export-jobs.ts   # 导出任务状态与事件归约
+│       └── toast.ts         # Toast 通知状态
 ├── locales/
 │   ├── zh-CN.json
 │   └── en-US.json
