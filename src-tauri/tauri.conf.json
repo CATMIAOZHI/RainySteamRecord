@@ -13,10 +13,10 @@
     "windows": [
       {
         "title": "RainySteamRecord",
-        "width": 1000,
-        "height": 700,
-        "minWidth": 800,
-        "minHeight": 500,
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
         "decorations": false,
         "transparent": false,
         "resizable": true,
@@ -27,7 +27,7 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["**"]
+        "scope": []
       }
     }
   },

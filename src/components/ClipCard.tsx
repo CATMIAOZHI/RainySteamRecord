@@ -105,6 +105,20 @@ function ClipCard({ clip, onPreview, onDetails, orderedFolders }: { clip: ClipIn
     <div
       onClick={(event) => event.shiftKey ? selectClipRange(clip.folder, orderedFolders) : toggleClipSelection(clip.folder)}
       onDoubleClick={() => onPreview(clip)}
+      onKeyDown={(event) => {
+        if (event.key === " " || event.code === "Space") {
+          event.preventDefault();
+          if (event.shiftKey) selectClipRange(clip.folder, orderedFolders);
+          else toggleClipSelection(clip.folder);
+        } else if (event.key === "Enter") {
+          event.preventDefault();
+          onPreview(clip);
+        } else if ((event.shiftKey && event.key === "F10") || event.key === "ContextMenu") {
+          event.preventDefault();
+          const rect = event.currentTarget.getBoundingClientRect();
+          setContextMenu({ x: Math.min(rect.left + 24, window.innerWidth - 190), y: Math.min(rect.top + 40, window.innerHeight - 326) });
+        }
+      }}
       onContextMenu={(event) => {
         event.preventDefault();
         setContextMenu({
@@ -112,7 +126,10 @@ function ClipCard({ clip, onPreview, onDetails, orderedFolders }: { clip: ClipIn
           y: Math.min(event.clientY, window.innerHeight - 326),
         });
       }}
-      className="group relative cursor-pointer overflow-hidden rounded-xl border-2 bg-surface transition-all duration-200"
+      tabIndex={0}
+      role="group"
+      aria-label={`${clip.game_name}, ${clip.datetime || clip.folder_name}, ${clip.duration}, ${t(`health.${clip.health_status}`)}, ${isSelected ? t("common.selected") : t("common.notSelected")}`}
+      className="group relative cursor-pointer overflow-hidden rounded-xl border-2 bg-surface transition-all duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
       style={{
         borderColor: isSelected ? "var(--accent)" : "var(--border)",
         transform: isSelected ? "scale(0.97)" : "scale(1)",
@@ -142,11 +159,16 @@ function ClipCard({ clip, onPreview, onDetails, orderedFolders }: { clip: ClipIn
           {clip.duration}
         </div>
         <div className="absolute right-2 top-2 flex items-center gap-1.5 rounded-full bg-black/70 px-2 py-1 text-[10px] text-white"><HealthBadge status={clip.health_status} />{t(`health.${clip.health_status}`)}</div>
-        <div className="absolute bottom-2 left-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/70 opacity-0 transition-opacity group-hover:opacity-100">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="white">
-            <path d="M5 3L13 8L5 13Z" />
-          </svg>
-        </div>
+        <button
+          aria-label={t("contextMenu.moreActions")}
+          className="absolute bottom-2 left-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/70 text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+          onClick={(event) => {
+            event.stopPropagation();
+            const rect = event.currentTarget.getBoundingClientRect();
+            setContextMenu({ x: rect.left, y: Math.min(rect.bottom + 4, window.innerHeight - 326) });
+          }}
+          onKeyDown={(event) => event.stopPropagation()}
+        >•••</button>
         {isSelected && (
           <div className="absolute left-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-accent text-white">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
@@ -161,12 +183,13 @@ function ClipCard({ clip, onPreview, onDetails, orderedFolders }: { clip: ClipIn
       </div>
       {contextMenu && createPortal(
         <div
+          role="menu"
           className="fixed z-[100] min-w-52 rounded-lg border border-border bg-surface p-1 shadow-2xl"
           style={{ left: Math.max(8, contextMenu.x), top: Math.max(8, contextMenu.y) }}
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => event.stopPropagation()}
         >
-          <button className="w-full rounded-md px-3 py-2 text-left text-sm text-text hover:bg-surface-hover" onClick={() => { setContextMenu(null); onPreview(clip); }}>{t("contextMenu.preview")}</button>
+          <button role="menuitem" autoFocus className="w-full rounded-md px-3 py-2 text-left text-sm text-text hover:bg-surface-hover" onClick={() => { setContextMenu(null); onPreview(clip); }}>{t("contextMenu.preview")}</button>
           <button className="w-full rounded-md px-3 py-2 text-left text-sm text-text hover:bg-surface-hover" onClick={() => { setContextMenu(null); onDetails(clip); }}>{t("library.details")}</button>
           <button className="w-full rounded-md px-3 py-2 text-left text-sm text-text hover:bg-surface-hover" onClick={() => { setContextMenu(null); void tauriBridge.openMpvPreview(clip.folder, `${clip.game_name} - ${clip.datetime || clip.folder_name}`); }}>{t("contextMenu.nativePreview")}</button>
           <button className="w-full rounded-md px-3 py-2 text-left text-sm text-text hover:bg-surface-hover" onClick={() => { setContextMenu(null); if (config) void startExport([clip.folder], config.export_path, gameIds); }}>{t("contextMenu.export")}</button>

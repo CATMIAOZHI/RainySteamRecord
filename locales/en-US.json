@@ -21,7 +21,15 @@
     "delete": "Delete",
     "save": "Save",
     "allGames": "All Games",
-    "openFileLocation": "Open File Location"
+    "openFileLocation": "Open File Location",
+    "selected": "Selected",
+    "notSelected": "Not selected"
+  },
+  "window": {
+    "minimize": "Minimize",
+    "maximize": "Maximize",
+    "restore": "Restore",
+    "close": "Close"
   },
   "filter": {
     "steamId": "Steam ID",
@@ -88,15 +96,28 @@
     "entry": "Jobs ({{count}})",
     "empty": "No export jobs yet",
     "cancel": "Cancel Job",
+    "cancelling": "Cancelling...",
+    "exitTitle": "Cancel Export and Exit?",
+    "exitMessage": "An export job is still active. The current job will be cancelled before exit, and successfully exported files will be kept.",
     "retryFailed": "Retry Failed ({{count}})",
     "openFolder": "Open Export Folder",
     "alreadyRunning": "An export job is already running",
     "successSummary": "Successfully exported {{count}} clips",
     "partialSummary": "Export finished: {{succeeded}} succeeded, {{failed}} failed",
     "cancelledSummary": "Export cancelled: {{succeeded}} of {{total}} completed",
+    "copyProgress": "{{completed}} / {{total}}",
+    "phase": {
+      "preparing": "Preparing output",
+      "copying": "Copying recording data",
+      "joining-video": "Joining video sessions",
+      "joining-audio": "Joining audio sessions",
+      "muxing": "Muxing audio and video",
+      "finalizing": "Finalizing output"
+    },
     "status": {
       "queued": "Waiting",
       "running": "Exporting",
+      "cancelling": "Cancelling",
       "completed": "Completed",
       "completed-with-errors": "Completed with Errors",
       "cancelled": "Cancelled",
@@ -109,6 +130,20 @@
       "failed": "Failed",
       "cancelled": "Cancelled"
     }
+  },
+  "exportErrors": {
+    "EXPORT_NO_CLIPS": "No recordings were selected for export.",
+    "EXPORT_DIR_CREATE": "The export folder could not be created. Check the path and permissions.",
+    "EXPORT_DIR_INVALID": "The export path is not a valid folder.",
+    "EXPORT_DIR_NOT_WRITABLE": "The export folder is not writable. Choose another folder or check its permissions.",
+    "EXPORT_FFMPEG_MISSING": "FFmpeg could not be found, so export cannot start. Reinstall the application.",
+    "EXPORT_SOURCE_MISSING": "Some source recordings were moved or deleted. Refresh the library.",
+    "EXPORT_SOURCE_INVALID": "Some recordings are incomplete and contain no exportable media session.",
+    "EXPORT_SOURCE_UNREADABLE": "Some recording files could not be read. Check their permissions.",
+    "EXPORT_DIR_IN_SOURCE": "The export folder cannot be inside a source recording folder.",
+    "EXPORT_SPACE_CHECK_FAILED": "The available disk space could not be determined.",
+    "EXPORT_SPACE_INSUFFICIENT": "Not enough space on the export drive: {{required}} required, {{available}} available.",
+    "EXPORT_TEMP_SPACE_INSUFFICIENT": "Not enough space on the system temporary drive: {{required}} required, {{available}} available."
   },
   "settings": {
     "title": "Settings",
@@ -125,7 +160,8 @@
     "checkForUpdates": "Check for Updates",
     "deleteConfig": "Delete Config Folder",
     "version": "Version",
-    "language": "Language"
+    "language": "Language",
+    "saving": "Saving..."
   },
   "initialization": {
     "loadingConfig": "Loading settings...",
@@ -154,6 +190,7 @@
     "fallback": "Compatibility mode"
   },
   "contextMenu": {
+    "moreActions": "More actions",
     "preview": "Preview",
     "nativePreview": "Open in Native Player",
     "export": "Export This Clip",

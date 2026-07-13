@@ -13,6 +13,7 @@ import ExportJobCenter from "./components/ExportJobCenter";
 import ConfirmDialog from "./components/ConfirmDialog";
 import { listenForExportJobs, useExportJobs } from "./stores/export-jobs";
 import { overlayRegistry } from "./lib/overlay";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export default function App() {
   const { t, i18n } = useTranslation();
@@ -28,6 +29,18 @@ export default function App() {
 
   const [showSettings, setShowSettings] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmExit, setConfirmExit] = useState(false);
+  const [closeAfterCancel, setCloseAfterCancel] = useState(false);
+  const jobs = useExportJobs((state) => state.jobs);
+  const activeJobs = jobs.filter((job) => ["queued", "running", "cancelling"].includes(job.status));
+
+  const requestClose = () => {
+    if (useExportJobs.getState().jobs.some((job) => ["queued", "running", "cancelling"].includes(job.status))) {
+      setConfirmExit(true);
+      return;
+    }
+    void getCurrentWindow().destroy();
+  };
 
   useEffect(() => {
     void initialize();
@@ -37,6 +50,24 @@ export default function App() {
       unlisten.then((fn) => fn());
     };
   }, []);
+
+  useEffect(() => {
+    const unlisten = getCurrentWindow().onCloseRequested((event) => {
+      if (useExportJobs.getState().jobs.some((job) => ["queued", "running", "cancelling"].includes(job.status))) {
+        event.preventDefault();
+        setConfirmExit(true);
+      }
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  useEffect(() => {
+    if (closeAfterCancel && activeJobs.length === 0) {
+      void getCurrentWindow().destroy();
+    }
+  }, [closeAfterCancel, activeJobs.length]);
 
   useEffect(() => {
     if (!config) return;
@@ -254,10 +285,28 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col">
-      <TitleBar />
+      <TitleBar onClose={requestClose} />
       {renderContent()}
       <ToastViewport />
       <ExportJobCenter />
+      {confirmExit && (
+        <ConfirmDialog
+          title={t("exportJobs.exitTitle")}
+          message={t("exportJobs.exitMessage")}
+          danger
+          onClose={() => setConfirmExit(false)}
+          onConfirm={() => {
+            setConfirmExit(false);
+            setCloseAfterCancel(true);
+            const job = useExportJobs.getState().jobs.find((item) => ["queued", "running"].includes(item.status));
+            if (job) {
+              void useExportJobs.getState().cancel(job.id).then((accepted) => {
+                if (!accepted) setCloseAfterCancel(false);
+              });
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

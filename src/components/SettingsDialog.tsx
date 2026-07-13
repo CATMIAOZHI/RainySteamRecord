@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useId, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "../stores/app";
 import { THEMES, applyTheme } from "../lib/theme";
@@ -14,6 +14,8 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [exportPath, setExportPath] = useState(config?.export_path || "");
   const [updateInfo, setUpdateInfo] = useState<ReleaseInfo | { error: boolean } | null>(null);
   const [appVersion, setAppVersion] = useState("");
+  const [saving, setSaving] = useState(false);
+  const titleId = useId();
   const savedThemeRef = useRef(config?.theme || "rainy");
   useOverlay(onClose);
 
@@ -32,11 +34,17 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
   }, []);
 
   const handleSave = async () => {
-    await saveConfig({ theme, language, export_path: exportPath });
-    i18n.changeLanguage(language);
-    applyTheme(theme);
-    savedThemeRef.current = theme;
-    onClose();
+    if (saving) return;
+    setSaving(true);
+    try {
+      await saveConfig({ theme, language, export_path: exportPath });
+      i18n.changeLanguage(language);
+      applyTheme(theme);
+      savedThemeRef.current = theme;
+      onClose();
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleExportPath = async () => {
@@ -65,12 +73,15 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
         className="max-h-[80vh] w-[420px] overflow-y-auto rounded-2xl border border-border bg-surface p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-5 flex items-center justify-between">
-          <h2 className="text-lg font-bold text-text">{t("settings.title")}</h2>
-          <button onClick={onClose} className="text-text-muted hover:text-text">✕</button>
+          <h2 id={titleId} className="text-lg font-bold text-text">{t("settings.title")}</h2>
+          <button onClick={onClose} aria-label={t("common.close")} className="text-text-muted hover:text-text">✕</button>
         </div>
 
         {/* Appearance */}
@@ -158,9 +169,10 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
           <span className="text-xs text-text-muted">{t("settings.version")}: {appVersion ? `v${appVersion.replace(/^v/, "")}` : "-"}</span>
           <button
             onClick={handleSave}
-            className="rounded-lg bg-accent px-5 py-1.5 text-sm font-semibold text-white hover:bg-accent-hover"
+            disabled={saving}
+            className="rounded-lg bg-accent px-5 py-1.5 text-sm font-semibold text-white hover:bg-accent-hover disabled:cursor-wait disabled:opacity-50"
           >
-            {t("common.save")}
+            {saving ? t("settings.saving") : t("common.save")}
           </button>
         </div>
       </div>

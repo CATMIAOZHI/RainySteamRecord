@@ -18,7 +18,7 @@
 React UI ── typed invoke / conversion-event ── Rust (Tauri 2) ── filesystem / managed media processes
 ```
 
-All backend logic is in Rust (no Node sidecar). Zustand owns library, selection, Toast, and export-job UI state; the backend owns scanning, metadata/health analysis, cache persistence, media I/O, and the single active conversion process.
+All backend logic is in Rust (no Node sidecar). Zustand owns library, selection, Toast, and export-job UI state; the backend owns scanning, metadata/health analysis, cache persistence, media I/O, the authorized clip registry, and the single active conversion process.
 
 | Layer | Tech | Location |
 |-------|------|----------|
@@ -93,6 +93,10 @@ All backend logic is in Rust (no Node sidecar). Zustand owns library, selection,
 - `list_clips` returns complete clip metadata, aggregate byte size, health status/issues, and uses the versioned per-library fingerprint cache unless a forced refresh disables it.
 - Clip management supports single and batch thumbnail regeneration and recycle-bin deletion; batch commands return per-item successes and failures.
 - `convert_clips(job_id, ...)` emits tagged `conversion-event` lifecycle events (`job-started`, per-item started/succeeded/failed, `job-finished`); cancellation is job-ID scoped and only one backend conversion job may run at once. The active job slot is cleared **before** `job-finished` is emitted so a new job can start immediately.
+- Export emits truthful per-item phases (`preparing`, byte-counted `copying`, joining, muxing, finalizing); copying uses cancellable buffered I/O rather than an uninterruptible whole-file copy.
+- Export preflight runs after the backend claims the job slot but before media processing, validating authorized sources, target writability/path placement, FFmpeg availability, and free space on both the target and system temporary drives.
+- Clip paths returned by a successful quick/full scan are canonicalized into an in-memory authorization registry. Destructive, preview, segment-read, thumbnail, folder-open, and export commands must reject paths not present beneath that registry.
+- The asset protocol starts with an empty scope; only backend-validated thumbnail and temporary preview files may be dynamically authorized. Never restore a global `scope: ["**"]`.
 - Export output uses token-based file reservation: `reserve_unique_filename` creates a placeholder with a random UUID token; `commit_output` verifies the token before atomically replacing via `MoveFileExW`; failed commits clean up both the temp file and the reservation.
 - Cancellation is checked right before the final `commit_output` rename, so a cancelled job never produces output.
 - `cleanup_preview` only deletes files matching `rainy_preview_*.mp4` inside `%TEMP%`.
@@ -129,6 +133,7 @@ npm run tauri:build  # Production build (Windows installer: nsis + msi)
 npm run lint         # ESLint
 npm run typecheck    # tsc --noEmit
 npm test             # Vitest unit tests
+npm run check:version # package/Cargo/Tauri/tag version consistency
 ```
 
 ## CI/CD
@@ -173,6 +178,7 @@ In `ffmpeg_path()`:
 - **Commit messages**: concise, descriptive
 - **All `std::process::Command`** on Windows must use `CREATE_NO_WINDOW` (`0x08000000`) via `creation_flags()` to avoid flashing console windows
 - **All long-lived FFmpeg/mpv children** must be assigned to `ProcessJob`; failure to assign must terminate the child immediately
+- **Frontend-supplied paths are untrusted**: clip/media operations must pass the backend authorization registry; never reintroduce arbitrary path deletion, reading, preview, or export.
 - **Windows atomic file replacement** must use `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING` (via the `replace_file` helper) — `std::fs::rename` does NOT overwrite existing files on Windows
 - **AppState locks**: `config_save_lock` and `game_ids_save_lock` are separate `tokio::sync::Mutex<()>` that serialize write-to-disk operations; the sync `config` and `game_ids` `std::sync::Mutex` fields protect in-memory data. `get_config` uses `blocking_lock()` on `config_save_lock` (safe only because Tauri commands run on a thread-pool, not the async runtime's main thread)
 - **Run lint + typecheck** before considering a task complete

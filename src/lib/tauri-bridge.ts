@@ -51,9 +51,17 @@ export interface BatchResult {
   failed: BatchItemFailure[];
 }
 
+export interface ExportPreflight {
+  available_bytes: number;
+  estimated_required_bytes: number;
+}
+
+export type ExportPhase = "preparing" | "copying" | "joining-video" | "joining-audio" | "muxing" | "finalizing";
+
 export type ConversionEvent =
   | { type: "job-started"; job_id: string; total: number }
   | { type: "item-started"; job_id: string; index: number; clip_folder: string }
+  | { type: "item-progress"; job_id: string; index: number; clip_folder: string; phase: ExportPhase; completed: number | null; total: number | null }
   | { type: "item-succeeded"; job_id: string; index: number; clip_folder: string; output_path: string }
   | { type: "item-failed"; job_id: string; index: number; clip_folder: string; error: string }
   | { type: "job-finished"; job_id: string; status: "completed" | "completed-with-errors" | "cancelled"; total: number; succeeded: number; failed: number };
@@ -102,6 +110,8 @@ export const tauriBridge = {
   fetchGameName: (gameId: string) => invoke<string>("fetch_game_name", { gameId }),
   fetchGameNamesBatch: (gameIds: string[]) => invoke<GameIds>("fetch_game_names_batch", { gameIds }),
   mergeNonSteamGames: (userdataPath: string) => invoke<GameIds>("merge_non_steam_games", { userdataPath }),
+  preflightExport: (clipFolders: string[], exportDir: string) =>
+    invoke<ExportPreflight>("preflight_export", { clipFolders, exportDir }),
   convertClips: (jobId: string, clipFolders: string[], exportDir: string, gameIds: GameIds) =>
     invoke<void>("convert_clips", { jobId, clipFolders, exportDir, gameIds }),
   cancelConversion: (jobId: string) => invoke<void>("cancel_conversion", { jobId }),

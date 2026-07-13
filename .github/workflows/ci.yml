@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  lint-typecheck:
+  verify:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,3 +23,28 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Test frontend
+        run: npm test
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Check versions
+        run: npm run check:version
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check Rust formatting
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+      - name: Lint Rust
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test Rust
+        working-directory: src-tauri
+        run: cargo test

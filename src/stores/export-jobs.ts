@@ -1,16 +1,19 @@
 import { create } from "zustand";
 import i18n from "../lib/i18n";
-import { onConversionEvent, tauriBridge, type ConversionEvent, type GameIds } from "../lib/tauri-bridge";
+import { onConversionEvent, tauriBridge, type ConversionEvent, type ExportPhase, type GameIds } from "../lib/tauri-bridge";
 import { toast } from "./toast";
 
 export type ExportItemStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
-export type ExportJobStatus = "queued" | "running" | "completed" | "completed-with-errors" | "cancelled" | "failed";
+export type ExportJobStatus = "queued" | "running" | "cancelling" | "completed" | "completed-with-errors" | "cancelled" | "failed";
 
 export interface ExportItem {
   clipFolder: string;
   status: ExportItemStatus;
   outputPath?: string;
   error?: string;
+  phase?: ExportPhase;
+  completed?: number;
+  total?: number;
 }
 
 export interface ExportJob {
@@ -24,7 +27,7 @@ export interface ExportJob {
 
 export function reduceConversionEvent(job: ExportJob, event: ConversionEvent): ExportJob {
   if (event.job_id !== job.id) return job;
-  if (event.type === "job-started") return { ...job, status: "running" };
+  if (event.type === "job-started") return job.status === "cancelling" ? job : { ...job, status: "running" };
   if (event.type === "job-finished") {
     const items = event.status === "cancelled"
       ? job.items.map((item) => item.status === "succeeded" ? item : { ...item, status: "cancelled" as const })
@@ -35,9 +38,13 @@ export function reduceConversionEvent(job: ExportJob, event: ConversionEvent): E
     ...job,
     items: job.items.map((item, index) => {
       if (index !== event.index || item.clipFolder !== event.clip_folder) return item;
-      if (event.type === "item-started") return { ...item, status: "running", error: undefined };
-      if (event.type === "item-succeeded") return { ...item, status: "succeeded", outputPath: event.output_path, error: undefined };
-      return { ...item, status: "failed", error: event.error };
+      if (event.type === "item-started") return { ...item, status: "running", error: undefined, phase: "preparing", completed: undefined, total: undefined };
+      if (event.type === "item-progress") {
+        if (item.status !== "running") return item;
+        return { ...item, phase: event.phase, completed: event.completed ?? undefined, total: event.total ?? undefined };
+      }
+      if (event.type === "item-succeeded") return { ...item, status: "succeeded", outputPath: event.output_path, error: undefined, phase: undefined, completed: undefined, total: undefined };
+      return { ...item, status: "failed", error: event.error, completed: undefined, total: undefined };
     }),
   };
 }
@@ -47,7 +54,7 @@ interface ExportJobsState {
   panelOpen: boolean;
   setPanelOpen: (open: boolean) => void;
   start: (folders: string[], exportDir: string, gameIds: GameIds) => Promise<void>;
-  cancel: (jobId: string) => Promise<void>;
+  cancel: (jobId: string) => Promise<boolean>;
   retryFailed: (jobId: string, gameIds: GameIds) => Promise<void>;
   removeJob: (jobId: string) => void;
   handleEvent: (event: ConversionEvent) => void;
@@ -55,13 +62,38 @@ interface ExportJobsState {
 
 const newJobId = () => `export-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
+export const formatBytes = (bytes: number) => {
+  if (!Number.isFinite(bytes) || bytes < 0) return "?";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+};
+
+export function formatExportError(error: unknown) {
+  const raw = String(error);
+  const [code, required, available] = raw.split("|");
+  const key = `exportErrors.${code}`;
+  if (i18n.exists(key)) {
+    return i18n.t(key, {
+      required: formatBytes(Number(required)),
+      available: formatBytes(Number(available)),
+    });
+  }
+  return raw;
+}
+
 export const useExportJobs = create<ExportJobsState>((set, get) => ({
   jobs: [],
   panelOpen: false,
   setPanelOpen: (panelOpen) => set({ panelOpen }),
   start: async (folders, exportDir, gameIds) => {
     if (!folders.length || !exportDir) return;
-    if (get().jobs.some((job) => job.status === "queued" || job.status === "running")) {
+    if (get().jobs.some((job) => job.status === "queued" || job.status === "running" || job.status === "cancelling")) {
       toast(i18n.t("exportJobs.alreadyRunning"), "info");
       set({ panelOpen: true });
       return;
@@ -77,26 +109,33 @@ export const useExportJobs = create<ExportJobsState>((set, get) => ({
     try {
       await tauriBridge.convertClips(job.id, folders, exportDir, gameIds);
     } catch (error) {
+      const message = formatExportError(error);
       set((state) => ({ jobs: state.jobs.map((item) => item.id === job.id ? {
         ...item,
         status: "failed",
-        error: String(error),
-        items: item.items.map((entry) => entry.status === "succeeded" ? entry : { ...entry, status: "failed", error: String(error) }),
+        error: message,
+        items: item.items.map((entry) => entry.status === "succeeded" ? entry : { ...entry, status: "failed", error: message }),
       } : item) }));
-      toast(String(error), "error");
+      toast(message, "error");
     }
   },
   cancel: async (jobId) => {
+    const job = get().jobs.find((item) => item.id === jobId);
+    if (!job || !["queued", "running"].includes(job.status)) return false;
+    set((state) => ({ jobs: state.jobs.map((item) => item.id === jobId ? { ...item, status: "cancelling" } : item) }));
     try {
       await tauriBridge.cancelConversion(jobId);
+      return true;
     } catch (error) {
+      set((state) => ({ jobs: state.jobs.map((item) => item.id === jobId && item.status === "cancelling" ? { ...item, status: job.status } : item) }));
       toast(String(error), "error");
+      return false;
     }
   },
   retryFailed: async (jobId, gameIds) => {
     const job = get().jobs.find((item) => item.id === jobId);
     if (!job) return;
-    if (get().jobs.some((j) => j.status === "queued" || j.status === "running")) {
+    if (get().jobs.some((j) => j.status === "queued" || j.status === "running" || j.status === "cancelling")) {
       toast(i18n.t("exportJobs.alreadyRunning"), "info");
       set({ panelOpen: true });
       return;
@@ -118,21 +157,22 @@ export const useExportJobs = create<ExportJobsState>((set, get) => ({
     try {
       await tauriBridge.convertClips(newId, folders, job.exportDir, gameIds);
     } catch (error) {
+      const message = formatExportError(error);
       set((state) => ({
         jobs: state.jobs.map((j) =>
           j.id === newId
             ? {
                 ...j,
                 status: "failed",
-                error: String(error),
+                error: message,
                 items: j.items.map((entry) =>
-                  entry.status === "queued" ? { ...entry, status: "failed", error: String(error) } : entry
+                  entry.status === "queued" ? { ...entry, status: "failed", error: message } : entry
                 ),
               }
             : j
         ),
       }));
-      toast(String(error), "error");
+      toast(message, "error");
     }
   },
   removeJob: (jobId) => {

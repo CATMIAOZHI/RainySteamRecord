@@ -25,6 +25,8 @@ jobs:
           node-version: 20
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
       - name: Download FFmpeg
         shell: pwsh
@@ -59,6 +61,22 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci --legacy-peer-deps
+
+      - name: Verify release version
+        run: npm run check:version
+
+      - name: Verify source
+        run: |
+          npm run lint
+          npm run typecheck
+          npm test
+
+      - name: Verify Rust
+        working-directory: src-tauri
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0

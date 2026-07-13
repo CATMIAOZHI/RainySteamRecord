@@ -575,11 +575,23 @@ pub fn get_clip_duration(clip_folder: &str) -> Result<String, String> {
 }
 
 pub async fn generate_thumbnail(clip_folder: &str) -> Result<Option<String>, String> {
+    generate_thumbnail_with_mode(clip_folder, false).await
+}
+
+pub async fn regenerate_thumbnail(clip_folder: &str) -> Result<Option<String>, String> {
+    generate_thumbnail_with_mode(clip_folder, true).await
+}
+
+async fn generate_thumbnail_with_mode(
+    clip_folder: &str,
+    force: bool,
+) -> Result<Option<String>, String> {
     let thumbnail_path = Path::new(clip_folder).join("thumbnail.jpg");
-    if thumbnail_path
-        .metadata()
-        .map(|m| m.len() > 0)
-        .unwrap_or(false)
+    if !force
+        && thumbnail_path
+            .metadata()
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
     {
         return Ok(Some(thumbnail_path.to_string_lossy().to_string()));
     }
@@ -587,10 +599,11 @@ pub async fn generate_thumbnail(clip_folder: &str) -> Result<Option<String>, Str
     let clip_folder = clip_folder.to_string();
     tokio::task::spawn_blocking(move || {
         let thumbnail_path = Path::new(&clip_folder).join("thumbnail.jpg");
-        if thumbnail_path
-            .metadata()
-            .map(|m| m.len() > 0)
-            .unwrap_or(false)
+        if !force
+            && thumbnail_path
+                .metadata()
+                .map(|m| m.len() > 0)
+                .unwrap_or(false)
         {
             return Ok(Some(thumbnail_path.to_string_lossy().to_string()));
         }
@@ -616,8 +629,9 @@ pub async fn generate_thumbnail(clip_folder: &str) -> Result<Option<String>, Str
                 .map(|m| m.len() > 0)
                 .unwrap_or(false)
             {
-                let _ = std::fs::remove_file(&thumbnail_path);
-                std::fs::rename(&temp_thumbnail, &thumbnail_path).map_err(|e| e.to_string())?;
+                replace_file(&temp_thumbnail, &thumbnail_path).inspect_err(|_| {
+                    let _ = std::fs::remove_file(&temp_thumbnail);
+                })?;
                 return Ok(Some(thumbnail_path.to_string_lossy().to_string()));
             }
             let _ = std::fs::remove_file(&temp_thumbnail);
@@ -630,7 +644,7 @@ pub async fn generate_thumbnail(clip_folder: &str) -> Result<Option<String>, Str
 
 #[cfg(test)]
 mod tests {
-    use super::{build_clip, build_quick_clip, folder_datetime, inspect_folder};
+    use super::{build_clip, build_quick_clip, folder_datetime, inspect_folder, replace_file};
     use std::collections::HashMap;
 
     #[test]
@@ -643,6 +657,23 @@ mod tests {
             folder_datetime("bg_2001120_20250510_104627").map(|value| value.0),
             Some("2025-05-10 10:46:27".to_string())
         );
+    }
+
+    #[test]
+    fn atomically_replaces_existing_thumbnail() {
+        let root =
+            std::env::temp_dir().join(format!("rainy-thumbnail-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let thumbnail = root.join("thumbnail.jpg");
+        let replacement = root.join("thumbnail.tmp.jpg");
+        std::fs::write(&thumbnail, b"old").unwrap();
+        std::fs::write(&replacement, b"new").unwrap();
+
+        replace_file(&replacement, &thumbnail).unwrap();
+
+        assert_eq!(std::fs::read(&thumbnail).unwrap(), b"new");
+        assert!(!replacement.exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

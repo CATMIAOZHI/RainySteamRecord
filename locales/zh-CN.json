@@ -21,7 +21,15 @@
     "delete": "删除",
     "save": "保存",
     "allGames": "所有游戏",
-    "openFileLocation": "打开所在目录"
+    "openFileLocation": "打开所在目录",
+    "selected": "已选择",
+    "notSelected": "未选择"
+  },
+  "window": {
+    "minimize": "最小化",
+    "maximize": "最大化",
+    "restore": "还原",
+    "close": "关闭"
   },
   "filter": {
     "steamId": "Steam ID",
@@ -88,15 +96,28 @@
     "entry": "任务中心（{{count}}）",
     "empty": "还没有导出任务",
     "cancel": "取消任务",
+    "cancelling": "正在取消...",
+    "exitTitle": "取消导出并退出？",
+    "exitMessage": "导出任务仍在进行。退出前会取消当前任务，已经成功导出的文件会保留。",
     "retryFailed": "重试失败项（{{count}}）",
     "openFolder": "打开导出目录",
     "alreadyRunning": "已有导出任务正在运行",
     "successSummary": "已成功导出 {{count}} 个片段",
     "partialSummary": "导出完成：成功 {{succeeded}} 个，失败 {{failed}} 个",
     "cancelledSummary": "导出已取消：完成 {{succeeded}} / {{total}} 个",
+    "copyProgress": "{{completed}} / {{total}}",
+    "phase": {
+      "preparing": "正在准备输出",
+      "copying": "正在复制录像数据",
+      "joining-video": "正在合并视频会话",
+      "joining-audio": "正在合并音频会话",
+      "muxing": "正在封装音视频",
+      "finalizing": "正在完成输出"
+    },
     "status": {
       "queued": "等待开始",
       "running": "正在导出",
+      "cancelling": "正在取消",
       "completed": "导出完成",
       "completed-with-errors": "完成，但有错误",
       "cancelled": "已取消",
@@ -109,6 +130,20 @@
       "failed": "失败",
       "cancelled": "已取消"
     }
+  },
+  "exportErrors": {
+    "EXPORT_NO_CLIPS": "没有选择要导出的录像。",
+    "EXPORT_DIR_CREATE": "无法创建导出目录，请检查路径和权限。",
+    "EXPORT_DIR_INVALID": "导出路径不是有效的文件夹。",
+    "EXPORT_DIR_NOT_WRITABLE": "导出目录不可写，请选择其他目录或检查权限。",
+    "EXPORT_FFMPEG_MISSING": "找不到 FFmpeg，无法开始导出。请重新安装应用。",
+    "EXPORT_SOURCE_MISSING": "部分原始录像已被移动或删除，请刷新录像库。",
+    "EXPORT_SOURCE_INVALID": "部分录像结构不完整，找不到可导出的媒体会话。",
+    "EXPORT_SOURCE_UNREADABLE": "无法读取部分录像文件，请检查文件权限。",
+    "EXPORT_DIR_IN_SOURCE": "导出目录不能位于原始录像文件夹内。",
+    "EXPORT_SPACE_CHECK_FAILED": "无法读取磁盘剩余空间。",
+    "EXPORT_SPACE_INSUFFICIENT": "导出磁盘空间不足：预计需要 {{required}}，当前可用 {{available}}。",
+    "EXPORT_TEMP_SPACE_INSUFFICIENT": "系统临时磁盘空间不足：预计需要 {{required}}，当前可用 {{available}}。"
   },
   "settings": {
     "title": "设置",
@@ -125,7 +160,8 @@
     "checkForUpdates": "检查更新",
     "deleteConfig": "删除配置文件夹",
     "version": "版本",
-    "language": "语言"
+    "language": "语言",
+    "saving": "正在保存..."
   },
   "initialization": {
     "loadingConfig": "正在加载设置...",
@@ -154,6 +190,7 @@
     "fallback": "兼容模式"
   },
   "contextMenu": {
+    "moreActions": "更多操作",
     "preview": "预览",
     "nativePreview": "使用原生播放器",
     "export": "导出此片段",

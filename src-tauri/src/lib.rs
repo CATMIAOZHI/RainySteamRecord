@@ -12,11 +12,13 @@ mod streaming;
 mod update;
 
 use serde::Serialize;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 struct ConversionJob {
     job_id: String,
@@ -30,6 +32,72 @@ pub struct AppState {
     pub game_ids: Mutex<std::collections::HashMap<String, String>>,
     game_ids_save_lock: tokio::sync::Mutex<()>,
     conversion_job: Mutex<Option<ConversionJob>>,
+    authorized_clips: Mutex<HashSet<PathBuf>>,
+    authorization_context: Mutex<Option<String>>,
+    authorized_export_dirs: Mutex<HashSet<PathBuf>>,
+}
+
+fn begin_scan(state: &AppState, context: &str) -> Result<(), String> {
+    let mut current = state
+        .authorization_context
+        .lock()
+        .map_err(|e| e.to_string())?;
+    if current.as_deref() != Some(context) {
+        state
+            .authorized_clips
+            .lock()
+            .map_err(|e| e.to_string())?
+            .clear();
+        *current = Some(context.to_string());
+    }
+    Ok(())
+}
+
+fn register_clips(state: &AppState, context: &str, clips: &[clip::ClipInfo]) -> Result<(), String> {
+    if state
+        .authorization_context
+        .lock()
+        .map_err(|e| e.to_string())?
+        .as_deref()
+        != Some(context)
+    {
+        return Ok(());
+    }
+    let mut authorized = state.authorized_clips.lock().map_err(|e| e.to_string())?;
+    authorized.clear();
+    for clip in clips {
+        if let Ok(path) = Path::new(&clip.folder).canonicalize() {
+            authorized.insert(path);
+        }
+    }
+    Ok(())
+}
+
+fn authorized_clip(state: &AppState, path: &str) -> Result<PathBuf, String> {
+    let canonical = Path::new(path)
+        .canonicalize()
+        .map_err(|_| "PATH_NOT_AUTHORIZED|Recording is no longer available")?;
+    let authorized = state.authorized_clips.lock().map_err(|e| e.to_string())?;
+    if authorized.contains(&canonical) {
+        Ok(canonical)
+    } else {
+        Err(
+            "PATH_NOT_AUTHORIZED|Recording was not discovered by the current library scan"
+                .to_string(),
+        )
+    }
+}
+
+fn authorized_file(state: &AppState, path: &str) -> Result<PathBuf, String> {
+    let canonical = Path::new(path)
+        .canonicalize()
+        .map_err(|_| "PATH_NOT_AUTHORIZED|File is no longer available")?;
+    let authorized = state.authorized_clips.lock().map_err(|e| e.to_string())?;
+    if authorized.iter().any(|clip| canonical.starts_with(clip)) {
+        Ok(canonical)
+    } else {
+        Err("PATH_NOT_AUTHORIZED|File is outside the scanned recording library".to_string())
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -61,6 +129,14 @@ enum ConversionEvent {
         job_id: String,
         index: usize,
         clip_folder: String,
+    },
+    ItemProgress {
+        job_id: String,
+        index: usize,
+        clip_folder: String,
+        phase: ffmpeg::ExportPhase,
+        completed: Option<u64>,
+        total: Option<u64>,
     },
     ItemSucceeded {
         job_id: String,
@@ -180,12 +256,14 @@ async fn list_clips(
     use_cache: Option<bool>,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<clip::ClipInfo>, String> {
+    let context = format!("{}|{}|{}", userdata_path, steam_id, media_type);
+    begin_scan(&state, &context)?;
     let game_ids_map = {
         let game_ids = state.game_ids.lock().map_err(|e| e.to_string())?;
         game_ids.clone()
     };
     let use_cache = use_cache.unwrap_or(true);
-    tokio::task::spawn_blocking(move || {
+    let clips = tokio::task::spawn_blocking(move || {
         clip::list_clips(
             &userdata_path,
             &steam_id,
@@ -195,7 +273,9 @@ async fn list_clips(
         )
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+    register_clips(&state, &context, &clips)?;
+    Ok(clips)
 }
 
 #[tauri::command]
@@ -205,46 +285,70 @@ async fn list_clips_quick(
     media_type: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<clip::ClipInfo>, String> {
+    let context = format!("{}|{}|{}", userdata_path, steam_id, media_type);
+    begin_scan(&state, &context)?;
     let game_ids = state
         .game_ids
         .lock()
         .map_err(|error| error.to_string())?
         .clone();
-    tokio::task::spawn_blocking(move || {
+    let clips = tokio::task::spawn_blocking(move || {
         clip::list_clips_quick(&userdata_path, &steam_id, &media_type, &game_ids)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())??;
+    register_clips(&state, &context, &clips)?;
+    Ok(clips)
 }
 
 #[tauri::command]
-async fn get_clip_duration(clip_folder: String) -> Result<String, String> {
+async fn get_clip_duration(
+    clip_folder: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+    authorized_clip(&state, &clip_folder)?;
     tokio::task::spawn_blocking(move || clip::get_clip_duration(&clip_folder))
         .await
         .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-async fn generate_thumbnail(clip_folder: String) -> Result<Option<String>, String> {
-    clip::generate_thumbnail(&clip_folder).await
+async fn generate_thumbnail(
+    clip_folder: String,
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    authorized_clip(&state, &clip_folder)?;
+    let path = clip::generate_thumbnail(&clip_folder).await?;
+    if let Some(path) = &path {
+        app_handle
+            .asset_protocol_scope()
+            .allow_file(path)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(path)
 }
 
 #[tauri::command]
-async fn regenerate_thumbnail(clip_folder: String) -> Result<Option<String>, String> {
-    let thumbnail_path = std::path::Path::new(&clip_folder).join("thumbnail.jpg");
-    tokio::task::spawn_blocking(move || {
-        if thumbnail_path.exists() {
-            std::fs::remove_file(thumbnail_path).map_err(|e| e.to_string())?;
-        }
-        Ok::<(), String>(())
-    })
-    .await
-    .map_err(|e| e.to_string())??;
-    clip::generate_thumbnail(&clip_folder).await
+async fn regenerate_thumbnail(
+    clip_folder: String,
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    authorized_clip(&state, &clip_folder)?;
+    let path = clip::regenerate_thumbnail(&clip_folder).await?;
+    if let Some(path) = &path {
+        app_handle
+            .asset_protocol_scope()
+            .allow_file(path)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(path)
 }
 
 #[tauri::command]
-async fn trash_clip(clip_folder: String) -> Result<(), String> {
+async fn trash_clip(clip_folder: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    authorized_clip(&state, &clip_folder)?;
     tokio::task::spawn_blocking(move || {
         let path = std::path::Path::new(&clip_folder);
         if !path.is_dir() {
@@ -257,12 +361,19 @@ async fn trash_clip(clip_folder: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn trash_clips(clip_folders: Vec<String>) -> BatchResult {
+async fn trash_clips(
+    clip_folders: Vec<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<BatchResult, String> {
     let mut result = BatchResult {
         succeeded: Vec::new(),
         failed: Vec::new(),
     };
     for clip_folder in clip_folders {
+        if let Err(error) = authorized_clip(&state, &clip_folder) {
+            result.failed.push(BatchItemFailure { clip_folder, error });
+            continue;
+        }
         let item = clip_folder.clone();
         let outcome = tokio::task::spawn_blocking(move || {
             let path = std::path::Path::new(&item);
@@ -282,32 +393,26 @@ async fn trash_clips(clip_folders: Vec<String>) -> BatchResult {
             Err(error) => result.failed.push(BatchItemFailure { clip_folder, error }),
         }
     }
-    result
+    Ok(result)
 }
 
 #[tauri::command]
-async fn regenerate_thumbnails(clip_folders: Vec<String>) -> BatchResult {
+async fn regenerate_thumbnails(
+    clip_folders: Vec<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<BatchResult, String> {
     let mut result = BatchResult {
         succeeded: Vec::new(),
         failed: Vec::new(),
     };
     for clip_folder in clip_folders {
-        let thumbnail_path = std::path::Path::new(&clip_folder).join("thumbnail.jpg");
-        let removed = tokio::task::spawn_blocking(move || {
-            if thumbnail_path.exists() {
-                std::fs::remove_file(thumbnail_path).map_err(|e| e.to_string())?;
-            }
-            Ok::<(), String>(())
-        })
-        .await
-        .map_err(|e| e.to_string())
-        .and_then(|value| value);
-        let outcome = match removed {
-            Ok(()) => clip::generate_thumbnail(&clip_folder)
-                .await
-                .and_then(|path| path.ok_or_else(|| "No session.mpd files found".to_string())),
-            Err(error) => Err(error),
-        };
+        if let Err(error) = authorized_clip(&state, &clip_folder) {
+            result.failed.push(BatchItemFailure { clip_folder, error });
+            continue;
+        }
+        let outcome = clip::regenerate_thumbnail(&clip_folder)
+            .await
+            .and_then(|path| path.ok_or_else(|| "No session.mpd files found".to_string()));
         match outcome {
             Ok(output_path) => result.succeeded.push(BatchItemSuccess {
                 clip_folder,
@@ -316,18 +421,33 @@ async fn regenerate_thumbnails(clip_folders: Vec<String>) -> BatchResult {
             Err(error) => result.failed.push(BatchItemFailure { clip_folder, error }),
         }
     }
-    result
+    Ok(result)
 }
 
 #[tauri::command]
-async fn prepare_preview(clip_folder: String) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || ffmpeg::prepare_preview(&clip_folder))
+async fn prepare_preview(
+    clip_folder: String,
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+    authorized_clip(&state, &clip_folder)?;
+    let path = tokio::task::spawn_blocking(move || ffmpeg::prepare_preview(&clip_folder))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())??;
+    app_handle
+        .asset_protocol_scope()
+        .allow_file(&path)
+        .map_err(|e| e.to_string())?;
+    Ok(path)
 }
 
 #[tauri::command]
-async fn open_mpv_preview(clip_folder: String, title: String) -> Result<(), String> {
+async fn open_mpv_preview(
+    clip_folder: String,
+    title: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    authorized_clip(&state, &clip_folder)?;
     mpv::open_preview(&clip_folder, &title)
 }
 
@@ -340,14 +460,22 @@ async fn cleanup_preview(preview_path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn get_clip_stream_info(clip_folder: String) -> Result<streaming::ClipStreamInfo, String> {
+async fn get_clip_stream_info(
+    clip_folder: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<streaming::ClipStreamInfo, String> {
+    authorized_clip(&state, &clip_folder)?;
     tokio::task::spawn_blocking(move || streaming::get_clip_stream_info(&clip_folder))
         .await
         .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-async fn read_segment_bytes(file_path: String) -> Result<tauri::ipc::Response, String> {
+async fn read_segment_bytes(
+    file_path: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<tauri::ipc::Response, String> {
+    authorized_file(&state, &file_path)?;
     let data = tokio::task::spawn_blocking(move || streaming::read_segment_bytes(&file_path))
         .await
         .map_err(|e| e.to_string())??;
@@ -430,6 +558,31 @@ async fn merge_non_steam_games(
 }
 
 #[tauri::command]
+async fn preflight_export(
+    clip_folders: Vec<String>,
+    export_dir: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<ffmpeg::ExportPreflight, String> {
+    for folder in &clip_folders {
+        authorized_clip(&state, folder)?;
+    }
+    let export_dir_for_check = export_dir.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        ffmpeg::preflight_export(&clip_folders, &export_dir_for_check)
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    if let Ok(path) = Path::new(&export_dir).canonicalize() {
+        state
+            .authorized_export_dirs
+            .lock()
+            .map_err(|e| e.to_string())?
+            .insert(path);
+    }
+    Ok(result)
+}
+
+#[tauri::command]
 async fn convert_clips(
     job_id: String,
     clip_folders: Vec<String>,
@@ -441,21 +594,9 @@ async fn convert_clips(
     if job_id.trim().is_empty() {
         return Err("[EXPORT_ERR] job_id must not be empty".to_string());
     }
-    let export_path = std::path::Path::new(&export_dir);
-    if !export_path.exists() {
-        return Err(format!(
-            "[EXPORT_ERR] Export directory does not exist: {}",
-            export_dir
-        ));
+    for folder in &clip_folders {
+        authorized_clip(&state, folder)?;
     }
-    let temp_file = export_path.join(format!(".rainy_write_test_{}", uuid::Uuid::new_v4()));
-    if let Err(e) = std::fs::write(&temp_file, b"test") {
-        return Err(format!(
-            "[EXPORT_ERR] Export directory is not writable: {}",
-            e
-        ));
-    }
-    let _ = std::fs::remove_file(temp_file);
     let cancelled = Arc::new(AtomicBool::new(false));
     {
         let mut active = state
@@ -472,6 +613,30 @@ async fn convert_clips(
             job_id: job_id.clone(),
             cancelled: cancelled.clone(),
         });
+    }
+    let preflight_folders = clip_folders.clone();
+    let preflight_dir = export_dir.clone();
+    let preflight_task = tokio::task::spawn_blocking(move || {
+        ffmpeg::preflight_export(&preflight_folders, &preflight_dir)
+    })
+    .await;
+    let preflight = match preflight_task {
+        Ok(result) => result,
+        Err(error) => {
+            *state.conversion_job.lock().map_err(|e| e.to_string())? = None;
+            return Err(error.to_string());
+        }
+    };
+    if let Err(error) = preflight {
+        *state.conversion_job.lock().map_err(|e| e.to_string())? = None;
+        return Err(error);
+    }
+    if let Ok(path) = Path::new(&export_dir).canonicalize() {
+        state
+            .authorized_export_dirs
+            .lock()
+            .map_err(|e| e.to_string())?
+            .insert(path);
     }
     let total = clip_folders.len();
     let mut succeeded = 0;
@@ -495,8 +660,30 @@ async fn convert_clips(
                 clip_folder: clip_folder.clone(),
             },
         );
-        match ffmpeg::convert_single_clip(clip_folder, &export_dir, &game_ids, cancelled.clone())
-            .await
+        let progress_app = app_handle.clone();
+        let progress_job = job_id.clone();
+        let progress_folder = clip_folder.clone();
+        let progress: ffmpeg::ProgressCallback = Arc::new(move |update| {
+            emit_conversion(
+                &progress_app,
+                ConversionEvent::ItemProgress {
+                    job_id: progress_job.clone(),
+                    index: idx,
+                    clip_folder: progress_folder.clone(),
+                    phase: update.phase,
+                    completed: update.completed,
+                    total: update.total,
+                },
+            );
+        });
+        match ffmpeg::convert_single_clip(
+            clip_folder,
+            &export_dir,
+            &game_ids,
+            cancelled.clone(),
+            progress,
+        )
+        .await
         {
             Ok(output_path) => {
                 succeeded += 1;
@@ -579,7 +766,38 @@ async fn check_for_updates() -> Result<update::ReleaseInfo, String> {
 }
 
 #[tauri::command]
-fn open_folder(path: String) -> Result<(), String> {
+fn open_folder(path: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let canonical = Path::new(&path).canonicalize().map_err(|e| e.to_string())?;
+    if !canonical.is_dir() {
+        return Err("PATH_NOT_AUTHORIZED|Folder does not exist".to_string());
+    }
+    let config_dir = config::get_config_dir().canonicalize().ok();
+    let export_dir = state
+        .config
+        .lock()
+        .map_err(|e| e.to_string())?
+        .export_path
+        .clone();
+    let export_dir = Path::new(&export_dir).canonicalize().ok();
+    let clip_allowed = state
+        .authorized_clips
+        .lock()
+        .map_err(|e| e.to_string())?
+        .contains(&canonical);
+    let export_allowed = state
+        .authorized_export_dirs
+        .lock()
+        .map_err(|e| e.to_string())?
+        .contains(&canonical);
+    if config_dir.as_ref() != Some(&canonical)
+        && export_dir.as_ref() != Some(&canonical)
+        && !clip_allowed
+        && !export_allowed
+    {
+        return Err(
+            "PATH_NOT_AUTHORIZED|Folder is outside application-managed locations".to_string(),
+        );
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -620,7 +838,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(AppState {
             config: Mutex::new(config),
             config_error: Mutex::new(config_error),
@@ -628,6 +846,9 @@ pub fn run() {
             game_ids: Mutex::new(game_ids),
             game_ids_save_lock: tokio::sync::Mutex::new(()),
             conversion_job: Mutex::new(None),
+            authorized_clips: Mutex::new(HashSet::new()),
+            authorization_context: Mutex::new(None),
+            authorized_export_dirs: Mutex::new(HashSet::new()),
         })
         .invoke_handler(tauri::generate_handler![
             get_config,
@@ -653,6 +874,7 @@ pub fn run() {
             fetch_game_name,
             fetch_game_names_batch,
             merge_non_steam_games,
+            preflight_export,
             convert_clips,
             cancel_conversion,
             check_for_updates,
@@ -693,5 +915,18 @@ mod tests {
         .unwrap();
         assert_eq!(value["type"], "job-finished");
         assert_eq!(value["job_id"], "job-1");
+
+        let value = serde_json::to_value(ConversionEvent::ItemProgress {
+            job_id: "job-1".to_string(),
+            index: 0,
+            clip_folder: "a".to_string(),
+            phase: crate::ffmpeg::ExportPhase::Copying,
+            completed: Some(1024),
+            total: Some(4096),
+        })
+        .unwrap();
+        assert_eq!(value["type"], "item-progress");
+        assert_eq!(value["phase"], "copying");
+        assert_eq!(value["completed"], 1024);
     }
 }
