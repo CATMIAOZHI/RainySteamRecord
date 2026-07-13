@@ -19,6 +19,42 @@ pub struct ExportPreflight {
     pub estimated_required_bytes: u64,
 }
 
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TrimMode {
+    Accurate,
+    Lossless,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct TrimOptions {
+    pub start_seconds: f64,
+    pub end_seconds: f64,
+    pub mode: TrimMode,
+}
+
+impl TrimOptions {
+    pub fn validate(&self, duration_seconds: f64) -> Result<(), String> {
+        if !self.start_seconds.is_finite()
+            || !self.end_seconds.is_finite()
+            || !duration_seconds.is_finite()
+            || self.start_seconds < 0.0
+            || self.end_seconds <= self.start_seconds
+            || self.end_seconds > duration_seconds + 0.05
+            || self.end_seconds - self.start_seconds < 0.1
+        {
+            return Err(export_error(
+                "EXPORT_TRIM_INVALID",
+                format!(
+                    "{}|{}|{}",
+                    self.start_seconds, self.end_seconds, duration_seconds
+                ),
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ExportPhase {
@@ -27,6 +63,7 @@ pub enum ExportPhase {
     JoiningVideo,
     JoiningAudio,
     Muxing,
+    Trimming,
     Finalizing,
 }
 
@@ -394,6 +431,7 @@ fn concatenate_media_files(
 fn generate_output_filename(
     clip_folder: &str,
     game_ids: &HashMap<String, String>,
+    trim: Option<&TrimOptions>,
 ) -> Result<String, String> {
     let folder_name = Path::new(clip_folder)
         .file_name()
@@ -410,7 +448,16 @@ fn generate_output_filename(
     let formatted_date = crate::clip::folder_datetime(folder_name)
         .map(|value| value.1)
         .unwrap_or_else(|| "UnknownDate".to_string());
-    let base = format!("{}_{}.mp4", sanitized, formatted_date);
+    let suffix = trim
+        .map(|options| {
+            format!(
+                "_trim_{:010}-{:010}",
+                (options.start_seconds * 1000.0).round() as u64,
+                (options.end_seconds * 1000.0).round() as u64
+            )
+        })
+        .unwrap_or_default();
+    let base = format!("{}_{}{}.mp4", sanitized, formatted_date, suffix);
     Ok(base)
 }
 
@@ -537,6 +584,7 @@ fn merge_clip_to_file(
     output_file: &Path,
     cancelled: &AtomicBool,
     progress_callback: &ProgressCallback,
+    trim: Option<&TrimOptions>,
 ) -> Result<(), String> {
     let session_mpd_files = find_session_mpd_files(clip_folder);
     if session_mpd_files.is_empty() {
@@ -608,17 +656,56 @@ fn merge_clip_to_file(
             path
         };
         (progress_callback)(ExportProgress {
-            phase: ExportPhase::Muxing,
+            phase: if trim.is_some() {
+                ExportPhase::Trimming
+            } else {
+                ExportPhase::Muxing
+            },
             completed: None,
             total: None,
         });
         let ffmpeg = ffmpeg_path()?;
         let mut cmd = create_command(&ffmpeg);
-        cmd.args(["-y", "-i"])
-            .arg(video)
-            .args(["-i"])
-            .arg(audio)
-            .args(["-c", "copy", "-f", "mp4"])
+        cmd.args(["-y", "-i"]).arg(video).args(["-i"]).arg(audio);
+        if let Some(options) = trim {
+            let start = format!("{:.3}", options.start_seconds);
+            let duration = format!("{:.3}", options.end_seconds - options.start_seconds);
+            cmd.args(["-ss", &start, "-t", &duration])
+                .args(["-map", "0:v:0", "-map", "1:a:0"]);
+            match options.mode {
+                TrimMode::Accurate => {
+                    cmd.args([
+                        "-c:v",
+                        "libx264",
+                        "-preset",
+                        "medium",
+                        "-crf",
+                        "18",
+                        "-pix_fmt",
+                        "yuv420p",
+                        "-c:a",
+                        "aac",
+                        "-b:a",
+                        "192k",
+                        "-movflags",
+                        "+faststart",
+                    ]);
+                }
+                TrimMode::Lossless => {
+                    cmd.args([
+                        "-c",
+                        "copy",
+                        "-avoid_negative_ts",
+                        "make_zero",
+                        "-movflags",
+                        "+faststart",
+                    ]);
+                }
+            }
+        } else {
+            cmd.args(["-c", "copy"]);
+        }
+        cmd.args(["-f", "mp4"])
             .arg(output_file)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
@@ -643,6 +730,7 @@ pub async fn convert_single_clip(
     game_ids: &HashMap<String, String>,
     cancelled: Arc<AtomicBool>,
     progress: ProgressCallback,
+    trim: Option<TrimOptions>,
 ) -> Result<String, String> {
     let clip_folder = clip_folder.to_string();
     let export_dir = export_dir.to_string();
@@ -653,7 +741,11 @@ pub async fn convert_single_clip(
             completed: None,
             total: None,
         });
-        let output_filename = generate_output_filename(&clip_folder, &game_ids)?;
+        if let Some(options) = trim.as_ref() {
+            let duration = crate::streaming::get_clip_stream_info(&clip_folder)?.duration_seconds;
+            options.validate(duration)?;
+        }
+        let output_filename = generate_output_filename(&clip_folder, &game_ids, trim.as_ref())?;
         let (output_file, reservation_token) =
             reserve_unique_filename(&export_dir, &output_filename)?;
         let output_path = Path::new(&output_file);
@@ -665,7 +757,13 @@ pub async fn convert_single_clip(
                 .unwrap_or("export"),
             uuid::Uuid::new_v4()
         ));
-        if let Err(error) = merge_clip_to_file(&clip_folder, &temp_file, &cancelled, &progress) {
+        if let Err(error) = merge_clip_to_file(
+            &clip_folder,
+            &temp_file,
+            &cancelled,
+            &progress,
+            trim.as_ref(),
+        ) {
             let _ = fs::remove_file(&temp_file);
             remove_reservation(output_path, &reservation_token);
             return Err(error);
@@ -732,38 +830,36 @@ pub fn extract_first_frame(
     Ok(())
 }
 
-pub fn prepare_preview(clip_folder: &str) -> Result<String, String> {
-    let temp_dir = std::env::temp_dir();
-    let preview_path = temp_dir.join(format!("rainy_preview_{}.mp4", uuid::Uuid::new_v4()));
-    if preview_path.exists() {
-        let _ = fs::remove_file(&preview_path);
-    }
-    let cancelled = AtomicBool::new(false);
-    let progress: ProgressCallback = Arc::new(|_| {});
-    merge_clip_to_file(clip_folder, &preview_path, &cancelled, &progress)?;
-    Ok(preview_path.to_string_lossy().to_string())
-}
-
-pub fn cleanup_preview(preview_path: &str) {
-    let path = Path::new(preview_path);
-    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    if !file_name.starts_with("rainy_preview_") || !file_name.ends_with(".mp4") {
-        return;
-    }
-    let temp_dir = std::env::temp_dir();
-    if let Ok(canonical) = path.canonicalize() {
-        if let Ok(temp_canonical) = temp_dir.canonicalize() {
-            if !canonical.starts_with(&temp_canonical) {
-                return;
-            }
-        }
-    }
-    let _ = fs::remove_file(preview_path);
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{commit_output, preflight_export, reservation_matches, reserve_unique_filename};
+    use super::{
+        commit_output, preflight_export, reservation_matches, reserve_unique_filename, TrimMode,
+        TrimOptions,
+    };
+
+    #[test]
+    fn validates_trim_range_against_duration() {
+        let valid = TrimOptions {
+            start_seconds: 1.25,
+            end_seconds: 4.75,
+            mode: TrimMode::Accurate,
+        };
+        assert!(valid.validate(5.0).is_ok());
+        for (start_seconds, end_seconds) in [
+            (-1.0, 2.0),
+            (2.0, 2.0),
+            (3.0, 2.0),
+            (0.0, 5.1),
+            (1.0, f64::NAN),
+        ] {
+            let invalid = TrimOptions {
+                start_seconds,
+                end_seconds,
+                mode: TrimMode::Lossless,
+            };
+            assert!(invalid.validate(5.0).is_err());
+        }
+    }
 
     #[test]
     fn preflight_rejects_empty_and_missing_sources() {

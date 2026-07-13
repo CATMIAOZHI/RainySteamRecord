@@ -16,7 +16,8 @@ RainySteamRecord — the Rainy Family tools.
 
 | Feature | Description |
 |---------|-------------|
-| 🎬 **Instant Preview** | Double-click a clip to play instantly via MSE streaming — fMP4 segments fed directly to SourceBuffer, first frame in ~100ms, no conversion waiting |
+| 🎬 **Instant Preview** | Double-click a clip to play via MSE streaming; unsupported codecs can open in bundled mpv while the trim dialog stays available, without proxy transcoding |
+| ✂️ **Start/End Trimming** | Set in/out points with sliders, manual timestamps, or I / O; choose accurate H.264/AAC re-encoding or fast lossless export with keyframe limitations |
 | 🖼️ **Thumbnail Grid** | Auto-extracted first-frame thumbnails, 3-column card grid with pagination and smooth animations |
 | 🎮 **Auto Game Names** | Identifies the game for each clip automatically, including non-Steam games (emulators, Epic, etc.) via Steam API + CRC32 appid |
 | 📦 **Batch Export** | Select multiple clips and export as `.mp4` with FFmpeg `-c copy` lossless conversion, auto-named (GameName_DateTime.mp4) |
@@ -79,9 +80,9 @@ Visit [Releases](https://github.com/CATMIAOZHI/RainySteamRecord/releases) for th
 | Path | Method | First-Frame Latency |
 |------|--------|---------------------|
 | **MSE Streaming** (primary) | Read m4s segments → MediaSource SourceBuffer → `<video>` progressive playback | ~100ms |
-| **FFmpeg Convert** (fallback) | Concat m4s → temp mp4 → `convertFileSrc` playback | Seconds |
+| **Native mpv** (fallback) | Open `session.mpd` on demand for unsupported codecs while retaining the trim dialog for manual timestamps | No pre-merge or transcode |
 
-Automatically falls back to FFmpeg when MSE is unsupported (e.g. HEVC codec on certain systems).
+Offers bundled mpv when MSE is unsupported while keeping the trim dialog open for manual timestamps. No proxy video is generated.
 
 ---
 

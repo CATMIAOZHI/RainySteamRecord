@@ -112,6 +112,7 @@
       "joining-video": "正在合并视频会话",
       "joining-audio": "正在合并音频会话",
       "muxing": "正在封装音视频",
+      "trimming": "正在裁剪视频",
       "finalizing": "正在完成输出"
     },
     "status": {
@@ -143,7 +144,8 @@
     "EXPORT_DIR_IN_SOURCE": "导出目录不能位于原始录像文件夹内。",
     "EXPORT_SPACE_CHECK_FAILED": "无法读取磁盘剩余空间。",
     "EXPORT_SPACE_INSUFFICIENT": "导出磁盘空间不足：预计需要 {{required}}，当前可用 {{available}}。",
-    "EXPORT_TEMP_SPACE_INSUFFICIENT": "系统临时磁盘空间不足：预计需要 {{required}}，当前可用 {{available}}。"
+    "EXPORT_TEMP_SPACE_INSUFFICIENT": "系统临时磁盘空间不足：预计需要 {{required}}，当前可用 {{available}}。",
+    "EXPORT_TRIM_INVALID": "裁剪区间无效，请重新设置开始和结束时间。"
   },
   "settings": {
     "title": "设置",
@@ -184,14 +186,32 @@
   "preview": {
     "preparing": "正在准备预览...",
     "error": "预览失败",
+    "nativeRequired": "此录像无法使用内置预览",
+    "nativeRequiredHint": "可打开原生播放器查看时间，然后返回此窗口手动输入入点和出点。不会生成代理视频。",
+    "openNative": "打开原生播放器",
     "duration": "时长",
     "type": "类型",
-    "doubleClickHint": "双击预览",
-    "fallback": "兼容模式"
+    "doubleClickHint": "双击预览"
+  },
+  "trim": {
+    "title": "裁剪导出",
+    "hint": "拖动范围、手动输入时间，或在播放位置按 I / O 设置入点和出点",
+    "start": "开始时间",
+    "end": "结束时间",
+    "startInput": "手动输入开始时间",
+    "endInput": "手动输入结束时间",
+    "setStart": "将当前位置设为开始（I）",
+    "setEnd": "将当前位置设为结束（O）",
+    "mode": "导出方式",
+    "accurate": "准确裁剪",
+    "lossless": "无损快速",
+    "accurateHint": "重新编码为 H.264/AAC，切点准确且兼容性更好，但耗时较长。",
+    "losslessHint": "直接复制原始音视频，速度快且无质量损失，但开始位置可能对齐到附近关键帧。",
+    "export": "导出选中区间"
   },
   "contextMenu": {
     "moreActions": "更多操作",
-    "preview": "预览",
+    "preview": "预览与裁剪",
     "nativePreview": "使用原生播放器",
     "export": "导出此片段",
     "regenerateThumbnail": "重新生成缩略图",

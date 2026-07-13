@@ -112,6 +112,7 @@
       "joining-video": "Joining video sessions",
       "joining-audio": "Joining audio sessions",
       "muxing": "Muxing audio and video",
+      "trimming": "Trimming video",
       "finalizing": "Finalizing output"
     },
     "status": {
@@ -143,7 +144,8 @@
     "EXPORT_DIR_IN_SOURCE": "The export folder cannot be inside a source recording folder.",
     "EXPORT_SPACE_CHECK_FAILED": "The available disk space could not be determined.",
     "EXPORT_SPACE_INSUFFICIENT": "Not enough space on the export drive: {{required}} required, {{available}} available.",
-    "EXPORT_TEMP_SPACE_INSUFFICIENT": "Not enough space on the system temporary drive: {{required}} required, {{available}} available."
+    "EXPORT_TEMP_SPACE_INSUFFICIENT": "Not enough space on the system temporary drive: {{required}} required, {{available}} available.",
+    "EXPORT_TRIM_INVALID": "The trim range is invalid. Set the start and end times again."
   },
   "settings": {
     "title": "Settings",
@@ -184,14 +186,32 @@
   "preview": {
     "preparing": "Preparing preview...",
     "error": "Preview failed",
+    "nativeRequired": "This recording cannot use the built-in preview",
+    "nativeRequiredHint": "Open the native player to check the time, then return here and enter the in and out points manually. No proxy video will be generated.",
+    "openNative": "Open Native Player",
     "duration": "Duration",
     "type": "Type",
-    "doubleClickHint": "Double-click to preview",
-    "fallback": "Compatibility mode"
+    "doubleClickHint": "Double-click to preview"
+  },
+  "trim": {
+    "title": "Trim Export",
+    "hint": "Drag the range, enter a time, or press I / O at the playhead to set in and out points",
+    "start": "Start time",
+    "end": "End time",
+    "startInput": "Enter start time manually",
+    "endInput": "Enter end time manually",
+    "setStart": "Set current position as start (I)",
+    "setEnd": "Set current position as end (O)",
+    "mode": "Export mode",
+    "accurate": "Accurate",
+    "lossless": "Fast lossless",
+    "accurateHint": "Re-encodes to H.264/AAC for accurate cut points and broad compatibility, but takes longer.",
+    "losslessHint": "Copies the original streams with no quality loss. It is fast, but the start may move to a nearby keyframe.",
+    "export": "Export Selected Range"
   },
   "contextMenu": {
     "moreActions": "More actions",
-    "preview": "Preview",
+    "preview": "Preview & Trim",
     "nativePreview": "Open in Native Player",
     "export": "Export This Clip",
     "regenerateThumbnail": "Regenerate Thumbnail",

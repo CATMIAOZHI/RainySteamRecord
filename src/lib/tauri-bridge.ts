@@ -56,7 +56,13 @@ export interface ExportPreflight {
   estimated_required_bytes: number;
 }
 
-export type ExportPhase = "preparing" | "copying" | "joining-video" | "joining-audio" | "muxing" | "finalizing";
+export type ExportPhase = "preparing" | "copying" | "joining-video" | "joining-audio" | "muxing" | "trimming" | "finalizing";
+
+export interface TrimOptions {
+  start_seconds: number;
+  end_seconds: number;
+  mode: "accurate" | "lossless";
+}
 
 export type ConversionEvent =
   | { type: "job-started"; job_id: string; total: number }
@@ -100,9 +106,7 @@ export const tauriBridge = {
   trashClip: (clipFolder: string) => invoke<void>("trash_clip", { clipFolder }),
   trashClips: (clipFolders: string[]) => invoke<BatchResult>("trash_clips", { clipFolders }),
   regenerateThumbnails: (clipFolders: string[]) => invoke<BatchResult>("regenerate_thumbnails", { clipFolders }),
-  preparePreview: (clipFolder: string) => invoke<string>("prepare_preview", { clipFolder }),
   openMpvPreview: (clipFolder: string, title: string) => invoke<void>("open_mpv_preview", { clipFolder, title }),
-  cleanupPreview: (previewPath: string) => invoke<void>("cleanup_preview", { previewPath }),
   getClipStreamInfo: (clipFolder: string) => invoke<ClipStreamInfo>("get_clip_stream_info", { clipFolder }),
   readSegmentBytes: (filePath: string) => invoke<ArrayBuffer>("read_segment_bytes", { filePath }),
   getGameIds: () => invoke<GameIds>("get_game_ids"),
@@ -112,8 +116,8 @@ export const tauriBridge = {
   mergeNonSteamGames: (userdataPath: string) => invoke<GameIds>("merge_non_steam_games", { userdataPath }),
   preflightExport: (clipFolders: string[], exportDir: string) =>
     invoke<ExportPreflight>("preflight_export", { clipFolders, exportDir }),
-  convertClips: (jobId: string, clipFolders: string[], exportDir: string, gameIds: GameIds) =>
-    invoke<void>("convert_clips", { jobId, clipFolders, exportDir, gameIds }),
+  convertClips: (jobId: string, clipFolders: string[], exportDir: string, gameIds: GameIds, trim?: TrimOptions) =>
+    invoke<void>("convert_clips", { jobId, clipFolders, exportDir, gameIds, trim }),
   cancelConversion: (jobId: string) => invoke<void>("cancel_conversion", { jobId }),
   checkForUpdates: () => invoke<ReleaseInfo>("check_for_updates"),
   openFolder: (path: string) => invoke<void>("open_folder", { path }),

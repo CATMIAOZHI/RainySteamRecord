@@ -34,7 +34,7 @@ All backend logic is in Rust (no Node sidecar). Zustand owns library, selection,
 |--------|------|-------------|
 | config | `config.rs` | JSON config + GameIDs.json in `%LOCALAPPDATA%\RainySteamRecord\` |
 | steam | `steam.rs` | Steam discovery, binary VDF parser, non-Steam CRC32 appid, Steam API |
-| ffmpeg | `ffmpeg.rs` | m4s concat → mp4, thumbnail extraction, cancellable exports, FFmpeg fallback preview |
+| ffmpeg | `ffmpeg.rs` | m4s concat → mp4, accurate/lossless trimming, thumbnail extraction, cancellable exports |
 | mpv | `mpv.rs` | Launch bundled mpv for native HEVC/DASH playback |
 | process_job | `process_job.rs` | Windows Job Object ownership for FFmpeg/mpv child processes |
 | streaming | `streaming.rs` | MSE streaming preview: session.mpd parsing, codec/duration extraction, segment byte reading |
@@ -48,10 +48,9 @@ All backend logic is in Rust (no Node sidecar). Zustand owns library, selection,
 | `find_session_mpd_paths` | `streaming.rs` | Recursive walk (depth-limited at 16) to find all `session.mpd` files — shared by `ffmpeg.rs` and `streaming.rs` |
 | `get_clip_stream_info` | `streaming.rs` | Parse MPD XML → codec strings, durations, chunk file paths per session |
 | `read_segment_bytes` | `streaming.rs` | Read a size-limited m4s segment as raw bytes — validates file name (`chunk-stream*` / `init-stream*`, `.m4s`) |
-| `merge_clip_to_file` | `ffmpeg.rs` | Shared by `convert_single_clip` (export) and `prepare_preview` (FFmpeg fallback) |
+| `merge_clip_to_file` | `ffmpeg.rs` | Shared media assembly for full and trim exports |
 | `reserve_unique_filename` | `ffmpeg.rs` | Token-based output file reservation — writes UUID token to placeholder file |
 | `commit_output` | `ffmpeg.rs` | Atomically replace reserved file via `MoveFileExW`; verifies token before replacing |
-| `prepare_preview` | `ffmpeg.rs` | Sync fn, wrapped in `spawn_blocking` at command layer |
 | `convert_single_clip` | `ffmpeg.rs` | Async, uses `spawn_blocking` for blocking FFmpeg I/O |
 | `replace_file` | `config.rs`, `clip.rs`, `ffmpeg.rs` | Windows atomic file replacement via `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING` |
 
@@ -64,7 +63,7 @@ All backend logic is in Rust (no Node sidecar). Zustand owns library, selection,
 | ClipGrid | `components/ClipGrid.tsx` | Responsive row-virtualized grid and preview/details state |
 | ClipCard | `components/ClipCard.tsx` | Selection/Shift-range selection, health, preview, thumbnail, and management menu |
 | ClipDetailsDialog | `components/ClipDetailsDialog.tsx` | Metadata, size, stream/session details, and health issues |
-| VideoPreviewDialog | `components/VideoPreviewDialog.tsx` | MSE player with native mpv and FFmpeg fallbacks |
+| VideoPreviewDialog | `components/VideoPreviewDialog.tsx` | MSE player with in/out controls, accurate/lossless trim export, and mpv fallback |
 | BottomBar | `components/BottomBar.tsx` | Result/size summary and selection batch actions |
 | ExportJobCenter | `components/ExportJobCenter.tsx` | Per-item export status, cancellation, and failed-item retry |
 | ToastViewport | `components/ToastViewport.tsx` | Global transient operation feedback |
@@ -84,23 +83,23 @@ All backend logic is in Rust (no Node sidecar). Zustand owns library, selection,
 8. Cleanup: `endOfStream()`, `revokeObjectURL()`, reset state
 
 ### Preview Fallbacks
-- MSE failure first launches bundled mpv against `session.mpd`, providing native HEVC playback without pre-merging the recording.
-- If mpv cannot launch, `preparePreview(clipFolder)` uses FFmpeg concat+mux to create a temporary MP4 for `<video>`.
-- `cleanupPreview(path)` deletes temporary FFmpeg previews when the dialog closes.
+- MSE failure keeps the trim dialog open and offers an explicit bundled-mpv action against `session.mpd`; users can return from mpv and enter in/out timestamps without proxy transcoding.
+- Bundled mpv is also available as an explicit context-menu action.
 
 ### Backend Contract
 
 - `list_clips` returns complete clip metadata, aggregate byte size, health status/issues, and uses the versioned per-library fingerprint cache unless a forced refresh disables it.
 - Clip management supports single and batch thumbnail regeneration and recycle-bin deletion; batch commands return per-item successes and failures.
 - `convert_clips(job_id, ...)` emits tagged `conversion-event` lifecycle events (`job-started`, per-item started/succeeded/failed, `job-finished`); cancellation is job-ID scoped and only one backend conversion job may run at once. The active job slot is cleared **before** `job-finished` is emitted so a new job can start immediately.
-- Export emits truthful per-item phases (`preparing`, byte-counted `copying`, joining, muxing, finalizing); copying uses cancellable buffered I/O rather than an uninterruptible whole-file copy.
+- Export emits truthful per-item phases (`preparing`, byte-counted `copying`, joining, muxing/trimming, finalizing); copying uses cancellable buffered I/O rather than an uninterruptible whole-file copy.
+- Trim export accepts exactly one authorized clip and a validated 100 ms minimum range. Accurate mode re-encodes to H.264/AAC; lossless mode stream-copies and may align the start to a nearby keyframe. Both modes use the normal preflight, cancellation, reservation, and atomic commit path.
 - Export preflight runs after the backend claims the job slot but before media processing, validating authorized sources, target writability/path placement, FFmpeg availability, and free space on both the target and system temporary drives.
 - Clip paths returned by a successful quick/full scan are canonicalized into an in-memory authorization registry. Destructive, preview, segment-read, thumbnail, folder-open, and export commands must reject paths not present beneath that registry.
-- The asset protocol starts with an empty scope; only backend-validated thumbnail and temporary preview files may be dynamically authorized. Never restore a global `scope: ["**"]`.
+- The asset protocol starts with an empty scope; only backend-validated thumbnail files may be dynamically authorized. Never restore a global `scope: ["**"]`.
 - Export output uses token-based file reservation: `reserve_unique_filename` creates a placeholder with a random UUID token; `commit_output` verifies the token before atomically replacing via `MoveFileExW`; failed commits clean up both the temp file and the reservation.
 - Cancellation is checked right before the final `commit_output` rename, so a cancelled job never produces output.
-- `cleanup_preview` only deletes files matching `rainy_preview_*.mp4` inside `%TEMP%`.
-- Preview commands expose MSE stream metadata/segments, native mpv launch, and FFmpeg temporary-file fallback.
+- Preview commands expose MSE stream metadata/segments and native mpv launch.
+- Window focus changes must not trigger `loadClips`; library refresh is explicit because focus-driven scans reset visible UI and disrupt preview/trim workflows.
 
 ## Steam Recording File Structure
 

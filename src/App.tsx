@@ -82,21 +82,6 @@ export default function App() {
   }, [initializationStatus, selectedSteamId, selectedMediaType, loadClips]);
 
   useEffect(() => {
-    let lastFocusScanTime = 0;
-    const onFocus = () => {
-      const now = Date.now();
-      if (now - lastFocusScanTime < 5000) return;
-      const state = useStore.getState();
-      if (state.initializationStatus === "ready" && !state.loading && !state.scanning) {
-        lastFocusScanTime = now;
-        void state.loadClips({ force: false });
-      }
-    };
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, []);
-
-  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         if (overlayRegistry.closeTopOverlay()) {

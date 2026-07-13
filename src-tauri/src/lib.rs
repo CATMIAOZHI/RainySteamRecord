@@ -425,23 +425,6 @@ async fn regenerate_thumbnails(
 }
 
 #[tauri::command]
-async fn prepare_preview(
-    clip_folder: String,
-    app_handle: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-) -> Result<String, String> {
-    authorized_clip(&state, &clip_folder)?;
-    let path = tokio::task::spawn_blocking(move || ffmpeg::prepare_preview(&clip_folder))
-        .await
-        .map_err(|e| e.to_string())??;
-    app_handle
-        .asset_protocol_scope()
-        .allow_file(&path)
-        .map_err(|e| e.to_string())?;
-    Ok(path)
-}
-
-#[tauri::command]
 async fn open_mpv_preview(
     clip_folder: String,
     title: String,
@@ -449,14 +432,6 @@ async fn open_mpv_preview(
 ) -> Result<(), String> {
     authorized_clip(&state, &clip_folder)?;
     mpv::open_preview(&clip_folder, &title)
-}
-
-#[tauri::command]
-async fn cleanup_preview(preview_path: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || ffmpeg::cleanup_preview(&preview_path))
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(())
 }
 
 #[tauri::command]
@@ -588,11 +563,15 @@ async fn convert_clips(
     clip_folders: Vec<String>,
     export_dir: String,
     game_ids: std::collections::HashMap<String, String>,
+    trim: Option<ffmpeg::TrimOptions>,
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     if job_id.trim().is_empty() {
         return Err("[EXPORT_ERR] job_id must not be empty".to_string());
+    }
+    if trim.is_some() && clip_folders.len() != 1 {
+        return Err("EXPORT_TRIM_INVALID|Trim export requires exactly one clip".to_string());
     }
     for folder in &clip_folders {
         authorized_clip(&state, folder)?;
@@ -682,6 +661,7 @@ async fn convert_clips(
             &game_ids,
             cancelled.clone(),
             progress,
+            trim.clone(),
         )
         .await
         {
@@ -864,9 +844,7 @@ pub fn run() {
             regenerate_thumbnails,
             trash_clip,
             trash_clips,
-            prepare_preview,
             open_mpv_preview,
-            cleanup_preview,
             get_clip_stream_info,
             read_segment_bytes,
             get_game_ids,

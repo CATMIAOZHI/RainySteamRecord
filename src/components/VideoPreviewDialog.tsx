@@ -2,6 +2,9 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { tauriBridge, type ClipInfo, type ClipStreamInfo } from "../lib/tauri-bridge";
 import { useOverlay } from "../lib/overlay";
+import { formatTimestamp, parseTimestamp } from "../lib/time";
+import { useStore } from "../stores/app";
+import { useExportJobs } from "../stores/export-jobs";
 
 const PRELOAD_AHEAD_SECONDS = 30;
 const CHUNKS_PER_BATCH = 5;
@@ -74,6 +77,9 @@ export default function VideoPreviewDialog({
 }) {
   const { t } = useTranslation();
   useOverlay(onClose);
+  const config = useStore((state) => state.config);
+  const gameIds = useStore((state) => state.gameIds);
+  const startTrimExport = useExportJobs((state) => state.startTrim);
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaSourceRef = useRef<MediaSource | null>(null);
   const objectUrlRef = useRef<string | null>(null);
@@ -82,21 +88,49 @@ export default function VideoPreviewDialog({
   const streamInfoRef = useRef<ClipStreamInfo | null>(null);
   const feedStateRef = useRef<FeedState>(createFeedState());
   const activeRef = useRef(true);
-  const fallbackPathRef = useRef<string | null>(null);
-  const fallbackRequestRef = useRef(0);
   const playbackGenerationRef = useRef(0);
   const mseFailedRef = useRef(false);
   const mseFailureRef = useRef<(reason: string) => void>(() => {});
-  const usingFallbackRef = useRef(false);
-  const fallbackReadyRef = useRef(false);
   const seekTargetRef = useRef<number | null>(null);
   const restartingMseRef = useRef(false);
   const seekTimerRef = useRef<number | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [usingFallback, setUsingFallback] = useState(false);
-  const [fallbackUrl, setFallbackUrl] = useState<string | null>(null);
+  const [nativePreviewRequired, setNativePreviewRequired] = useState(false);
+  const [timelineDuration, setTimelineDuration] = useState(Math.max(0, clip.duration_seconds));
+  const [trimStart, setTrimStart] = useState(0);
+  const [trimEnd, setTrimEnd] = useState(Math.max(0, clip.duration_seconds));
+  const [trimStartInput, setTrimStartInput] = useState(formatTimestamp(0));
+  const [trimEndInput, setTrimEndInput] = useState(formatTimestamp(Math.max(0, clip.duration_seconds)));
+  const [trimMode, setTrimMode] = useState<"accurate" | "lossless">("accurate");
+  const trimDuration = trimEnd - trimStart;
+  const trimValid = timelineDuration > 0 && trimStart >= 0 && trimEnd <= timelineDuration + 0.05 && trimDuration >= 0.1;
+  const parsedStartInput = parseTimestamp(trimStartInput);
+  const parsedEndInput = parseTimestamp(trimEndInput);
+  const startInputValid = parsedStartInput !== null && parsedStartInput <= trimEnd - 0.1;
+  const endInputValid = parsedEndInput !== null && parsedEndInput >= trimStart + 0.1 && parsedEndInput <= timelineDuration + 0.05;
+
+  useEffect(() => setTrimStartInput(formatTimestamp(trimStart)), [trimStart]);
+  useEffect(() => setTrimEndInput(formatTimestamp(trimEnd)), [trimEnd]);
+
+  const applyStartInput = () => {
+    if (!startInputValid || parsedStartInput === null) {
+      setTrimStartInput(formatTimestamp(trimStart));
+      return;
+    }
+    setTrimStart(parsedStartInput);
+    setTrimStartInput(formatTimestamp(parsedStartInput));
+  };
+
+  const applyEndInput = () => {
+    if (!endInputValid || parsedEndInput === null) {
+      setTrimEndInput(formatTimestamp(trimEnd));
+      return;
+    }
+    setTrimEnd(parsedEndInput);
+    setTrimEndInput(formatTimestamp(parsedEndInput));
+  };
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -116,11 +150,17 @@ export default function VideoPreviewDialog({
       } else if (event.key === "ArrowRight") {
         event.preventDefault();
         video.currentTime = Math.min(video.duration || 0, video.currentTime + 5);
+      } else if (event.key.toLowerCase() === "i") {
+        event.preventDefault();
+        setTrimStart(Math.max(0, Math.min(video.currentTime, trimEnd - 0.1)));
+      } else if (event.key.toLowerCase() === "o") {
+        event.preventDefault();
+        setTrimEnd(Math.min(timelineDuration, Math.max(video.currentTime, trimStart + 0.1)));
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [timelineDuration, trimEnd, trimStart]);
 
   const disposeMse = useCallback(() => {
     const ms = mediaSourceRef.current;
@@ -279,47 +319,19 @@ export default function VideoPreviewDialog({
     }
   }, [maybeEndMse, tryAppend]);
 
-  const fallbackToFFmpeg = useCallback(async (reason: string) => {
+  const handleMseFailure = useCallback((reason: string) => {
     if (!activeRef.current || mseFailedRef.current) return;
     mseFailedRef.current = true;
-    console.warn(`MSE playback failed (${reason}), falling back to FFmpeg`);
-    const requestId = ++fallbackRequestRef.current;
+    console.warn(`MSE playback failed (${reason}), native preview required`);
     playbackGenerationRef.current++;
-    usingFallbackRef.current = true;
-    fallbackReadyRef.current = false;
     disposeMse();
-    setLoading(true);
+    setLoading(false);
     setError(null);
-    setUsingFallback(true);
-    setFallbackUrl(null);
-    try {
-      await tauriBridge.openMpvPreview(
-        clip.folder,
-        `${clip.game_name} - ${clip.datetime || clip.folder_name}`,
-      );
-      if (activeRef.current && requestId === fallbackRequestRef.current) onClose();
-      return;
-    } catch (mpvError) {
-      console.warn(`Native mpv playback failed (${String(mpvError)}), preparing MP4 fallback`);
-    }
-    try {
-      const path = await tauriBridge.preparePreview(clip.folder);
-      if (!activeRef.current || requestId !== fallbackRequestRef.current) {
-        await tauriBridge.cleanupPreview(path);
-        return;
-      }
-      fallbackPathRef.current = path;
-      fallbackReadyRef.current = true;
-      setFallbackUrl(tauriBridge.toAssetUrl(path));
-    } catch (e) {
-      if (!activeRef.current || requestId !== fallbackRequestRef.current) return;
-      setError(String(e));
-      setLoading(false);
-    }
-  }, [clip, disposeMse, onClose]);
+    setNativePreviewRequired(true);
+  }, [disposeMse]);
 
   mseFailureRef.current = (reason: string) => {
-    void fallbackToFFmpeg(reason);
+    handleMseFailure(reason);
   };
 
   const startMsePlayback = useCallback(async (
@@ -398,17 +410,15 @@ export default function VideoPreviewDialog({
         }
         video.play().catch(() => {});
       } catch (e) {
-        if (mediaSourceRef.current === ms) fallbackToFFmpeg(String(e));
+        if (mediaSourceRef.current === ms) handleMseFailure(String(e));
       }
     }, { once: true });
-  }, [fallbackToFFmpeg, feedChunks, tryAppend, flushQueue]);
+  }, [handleMseFailure, feedChunks, tryAppend, flushQueue]);
 
   useEffect(() => {
     let cancelled = false;
     activeRef.current = true;
     mseFailedRef.current = false;
-    usingFallbackRef.current = false;
-    fallbackReadyRef.current = false;
     feedStateRef.current = createFeedState();
     streamInfoRef.current = null;
     const generation = ++playbackGenerationRef.current;
@@ -416,20 +426,20 @@ export default function VideoPreviewDialog({
       try {
         setLoading(true);
         setError(null);
-        setUsingFallback(false);
-        setFallbackUrl(null);
+        setNativePreviewRequired(false);
         const info = await tauriBridge.getClipStreamInfo(clip.folder);
         if (cancelled) return;
         streamInfoRef.current = info;
+        setTimelineDuration(info.duration_seconds);
+        setTrimEnd((current) => current > 0 ? Math.min(current, info.duration_seconds) : info.duration_seconds);
         await startMsePlayback(info, generation);
       } catch (e) {
-        if (!cancelled) await fallbackToFFmpeg(String(e));
+        if (!cancelled) handleMseFailure(String(e));
       }
     })();
     return () => {
       cancelled = true;
       activeRef.current = false;
-      fallbackRequestRef.current++;
       playbackGenerationRef.current++;
       disposeMse();
       feedStateRef.current = createFeedState();
@@ -437,16 +447,12 @@ export default function VideoPreviewDialog({
         window.clearTimeout(seekTimerRef.current);
         seekTimerRef.current = null;
       }
-      if (fallbackPathRef.current) {
-        tauriBridge.cleanupPreview(fallbackPathRef.current).catch(() => {});
-        fallbackPathRef.current = null;
-      }
     };
-  }, [clip.folder, disposeMse, startMsePlayback, fallbackToFFmpeg]);
+  }, [clip.folder, disposeMse, startMsePlayback, handleMseFailure]);
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || usingFallback) return;
+    if (!video) return;
     const onTimeUpdate = () => {
       if (feedStateRef.current.videoDone) return;
       const buffered = video.buffered;
@@ -473,11 +479,11 @@ export default function VideoPreviewDialog({
     };
     video.addEventListener("timeupdate", onTimeUpdate);
     return () => video.removeEventListener("timeupdate", onTimeUpdate);
-  }, [feedChunks, usingFallback]);
+  }, [feedChunks]);
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || usingFallback) return;
+    if (!video) return;
     const onSeeking = () => {
       const info = streamInfoRef.current;
       const target = video.currentTime;
@@ -496,7 +502,7 @@ export default function VideoPreviewDialog({
         const state = createFeedStateAt(info, target);
         feedStateRef.current = state;
         void startMsePlayback(info, generation, getBufferStart(info, state), target)
-          .catch((e) => fallbackToFFmpeg(String(e)));
+          .catch((e) => handleMseFailure(String(e)));
       }, 150);
     };
     const onProgress = () => {
@@ -518,7 +524,7 @@ export default function VideoPreviewDialog({
       video.removeEventListener("progress", onProgress);
       video.removeEventListener("canplay", onProgress);
     };
-  }, [disposeMse, fallbackToFFmpeg, startMsePlayback, usingFallback]);
+  }, [disposeMse, handleMseFailure, startMsePlayback]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -527,22 +533,11 @@ export default function VideoPreviewDialog({
       if (!activeRef.current) return;
       if (restartingMseRef.current) return;
       const reason = video.error?.message || "Video playback error";
-      if (usingFallbackRef.current) {
-        if (!fallbackReadyRef.current) return;
-        setError(reason);
-        setLoading(false);
-      } else {
-        mseFailureRef.current(reason);
-      }
-    };
-    const onCanPlay = () => {
-      if (usingFallbackRef.current && fallbackReadyRef.current) setLoading(false);
+      mseFailureRef.current(reason);
     };
     video.addEventListener("error", onVideoError);
-    video.addEventListener("canplay", onCanPlay);
     return () => {
       video.removeEventListener("error", onVideoError);
-      video.removeEventListener("canplay", onCanPlay);
     };
   }, []);
 
@@ -552,7 +547,7 @@ export default function VideoPreviewDialog({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-[900px] mx-4 overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl"
+        className="mx-4 max-h-[calc(100vh-2rem)] w-full max-w-[900px] overflow-y-auto rounded-2xl border border-border bg-surface shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-3">
@@ -572,7 +567,6 @@ export default function VideoPreviewDialog({
         <div className="relative bg-black" style={{ aspectRatio: "16 / 9" }}>
           <video
             ref={videoRef}
-            src={usingFallback ? fallbackUrl ?? undefined : undefined}
             controls
             autoPlay
             onDoubleClick={() => {
@@ -584,13 +578,34 @@ export default function VideoPreviewDialog({
                 document.exitFullscreen().catch(() => {});
               }
             }}
-            className={`h-full w-full ${loading || error ? "invisible" : ""}`}
+            className={`h-full w-full ${loading || error || nativePreviewRequired ? "invisible" : ""}`}
           />
           {loading ? (
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="flex flex-col items-center gap-3">
                 <div className="h-10 w-10 animate-spin rounded-full border-2 border-accent border-t-transparent" />
                 <p className="text-sm text-text-muted">{t("preview.preparing")}</p>
+              </div>
+            </div>
+          ) : nativePreviewRequired ? (
+            <div className="absolute inset-0 flex items-center justify-center p-6 text-center">
+              <div className="max-w-md">
+                <p className="text-sm font-semibold text-white">{t("preview.nativeRequired")}</p>
+                <p className="mt-2 text-xs leading-5 text-white/65">{t("preview.nativeRequiredHint")}</p>
+                {error && <p className="mt-2 text-xs text-red-400">{t("preview.error")}: {error}</p>}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setError(null);
+                    void tauriBridge.openMpvPreview(
+                      clip.folder,
+                      `${clip.game_name} - ${clip.datetime || clip.folder_name}`,
+                    ).catch((reason) => setError(String(reason)));
+                  }}
+                  className="mt-4 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover"
+                >
+                  {t("preview.openNative")}
+                </button>
               </div>
             </div>
           ) : error ? (
@@ -600,11 +615,141 @@ export default function VideoPreviewDialog({
           ) : null}
         </div>
 
+        <div className="border-t border-border bg-surface-2/40 px-5 py-4">
+          <div className="mb-3 flex items-center justify-between gap-4">
+            <div>
+              <h3 className="text-sm font-semibold text-text">{t("trim.title")}</h3>
+              <p className="mt-0.5 text-xs text-text-muted">{t("trim.hint")}</p>
+            </div>
+            <div className="rounded-md bg-accent/10 px-2.5 py-1 font-mono text-xs font-semibold text-accent">
+              {formatTimestamp(Math.max(0, trimDuration))}
+            </div>
+          </div>
+
+          <div className="relative mb-4 h-2 overflow-hidden rounded-full bg-border">
+            <div
+              className="absolute inset-y-0 rounded-full bg-accent"
+              style={{
+                left: `${timelineDuration > 0 ? (trimStart / timelineDuration) * 100 : 0}%`,
+                width: `${timelineDuration > 0 ? Math.max(0, (trimDuration / timelineDuration) * 100) : 0}%`,
+              }}
+            />
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-lg border border-border bg-surface p-3">
+              <div className="mb-2 flex items-center justify-between text-xs">
+                <label htmlFor="trim-start" className="font-semibold text-text">{t("trim.start")}</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  aria-label={t("trim.startInput")}
+                  aria-invalid={!startInputValid}
+                  value={trimStartInput}
+                  onChange={(event) => setTrimStartInput(event.target.value)}
+                  onBlur={applyStartInput}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") event.currentTarget.blur();
+                    if (event.key === "Escape") setTrimStartInput(formatTimestamp(trimStart));
+                  }}
+                  className={`w-28 rounded border bg-surface-2 px-2 py-1 text-right font-mono text-xs text-text outline-none focus:border-accent ${startInputValid ? "border-border" : "border-danger"}`}
+                />
+              </div>
+              <input
+                id="trim-start"
+                type="range"
+                min="0"
+                max={timelineDuration || 0}
+                step="0.01"
+                value={Math.min(trimStart, timelineDuration)}
+                onChange={(event) => setTrimStart(Math.min(Number(event.target.value), Math.max(0, trimEnd - 0.1)))}
+                className="w-full accent-[var(--color-accent)]"
+              />
+              <button
+                type="button"
+                onClick={() => setTrimStart(Math.min(videoRef.current?.currentTime ?? 0, Math.max(0, trimEnd - 0.1)))}
+                className="mt-2 w-full rounded-md border border-border px-2 py-1.5 text-xs font-medium text-text hover:bg-surface-hover"
+              >
+                {t("trim.setStart")}
+              </button>
+            </div>
+            <div className="rounded-lg border border-border bg-surface p-3">
+              <div className="mb-2 flex items-center justify-between text-xs">
+                <label htmlFor="trim-end" className="font-semibold text-text">{t("trim.end")}</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  aria-label={t("trim.endInput")}
+                  aria-invalid={!endInputValid}
+                  value={trimEndInput}
+                  onChange={(event) => setTrimEndInput(event.target.value)}
+                  onBlur={applyEndInput}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") event.currentTarget.blur();
+                    if (event.key === "Escape") setTrimEndInput(formatTimestamp(trimEnd));
+                  }}
+                  className={`w-28 rounded border bg-surface-2 px-2 py-1 text-right font-mono text-xs text-text outline-none focus:border-accent ${endInputValid ? "border-border" : "border-danger"}`}
+                />
+              </div>
+              <input
+                id="trim-end"
+                type="range"
+                min="0"
+                max={timelineDuration || 0}
+                step="0.01"
+                value={Math.min(trimEnd, timelineDuration)}
+                onChange={(event) => setTrimEnd(Math.max(Number(event.target.value), trimStart + 0.1))}
+                className="w-full accent-[var(--color-accent)]"
+              />
+              <button
+                type="button"
+                onClick={() => setTrimEnd(Math.max(videoRef.current?.currentTime ?? timelineDuration, trimStart + 0.1))}
+                className="mt-2 w-full rounded-md border border-border px-2 py-1.5 text-xs font-medium text-text hover:bg-surface-hover"
+              >
+                {t("trim.setEnd")}
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div className="flex-1">
+              <div className="mb-1.5 text-xs font-semibold text-text">{t("trim.mode")}</div>
+              <div className="inline-flex rounded-lg border border-border bg-surface p-1">
+                {(["accurate", "lossless"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setTrimMode(mode)}
+                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${trimMode === mode ? "bg-accent text-white" : "text-text-muted hover:text-text"}`}
+                  >
+                    {t(`trim.${mode}`)}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1.5 text-xs text-text-muted">{t(`trim.${trimMode}Hint`)}</p>
+            </div>
+            <button
+              type="button"
+              disabled={!trimValid || !config}
+              onClick={() => {
+                if (!config || !trimValid) return;
+                void startTrimExport(clip.folder, config.export_path, gameIds, {
+                  start_seconds: trimStart,
+                  end_seconds: trimEnd,
+                  mode: trimMode,
+                });
+              }}
+              className="h-10 rounded-lg bg-accent px-5 text-sm font-semibold text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {t("trim.export")}
+            </button>
+          </div>
+        </div>
+
         <div className="flex items-center justify-between px-5 py-3">
           <div className="flex gap-4 text-xs text-text-muted">
             <span>{t("preview.duration")}: {clip.duration}</span>
             <span>{t("preview.type")}: {clip.media_type === "manual" ? t("filter.manualClips") : t("filter.backgroundClips")}</span>
-            {usingFallback && <span className="text-amber-500">{t("preview.fallback")}</span>}
           </div>
           <button
             onClick={onClose}
