@@ -37,6 +37,14 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Prepare resource placeholders
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path src-tauri/binaries -Force | Out-Null
+          New-Item -ItemType File -Path src-tauri/binaries/ffmpeg.exe -Force | Out-Null
+          New-Item -ItemType File -Path src-tauri/binaries/mpv.exe -Force | Out-Null
+          New-Item -ItemType File -Path src-tauri/binaries/d3dcompiler_43.dll -Force | Out-Null
+
       - name: Check Rust formatting
         working-directory: src-tauri
         run: cargo fmt --check

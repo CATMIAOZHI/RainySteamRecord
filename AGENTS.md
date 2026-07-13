@@ -10,7 +10,7 @@
 - **License**: GPL-3.0 (portions based on SteamClip by Nastas95, also GPL-3.0)
 - **Platform**: Windows only
 - **Language**: UI bilingual (zh-CN default / en-US) via i18next; code comments/logs in English
-- **Release**: https://github.com/CATMIAOZHI/RainySteamRecord/releases/tag/v0.2.0
+- **Release**: https://github.com/CATMIAOZHI/RainySteamRecord/releases/tag/v0.2.1
 
 ## Architecture
 

@@ -1,6 +1,6 @@
 {
   "name": "rainy-steam-record",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A modern GUI tool to browse and export Steam game recordings (DASH .m4s to .mp4).",
   "license": "GPL-3.0",
   "type": "module",
